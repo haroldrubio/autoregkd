@@ -30,6 +30,7 @@ hypparam_name: str = field(
 )
 ```
 3) Add a keyword argument into `training_args` in `train.py`: `hypparam_name=config['hypparam_name']`
+4) `hypparam_name` is now accessible in the `CustomTrainer` class via `self.arg.hypparam_name` for use throughout the class
 ### Changing the learning process
 Initialize additional schedulers into the `create_optimizer_and_scheduler` function of `CustomTrainer` and step them in the `train` function. \
 Learn with a new loss by changing the `compute_loss` function.
