@@ -1,0 +1,14 @@
+program: run_experiments.py
+command:
+  - ${interpreter}
+  - ${program}
+  - ${args}
+method: bayes
+metric:
+  goal: minimize
+  name: 'eval/loss'
+parameters:
+  learning_rate:
+    distribution: log_uniform
+    max: -4
+    min: -6
