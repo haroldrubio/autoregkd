@@ -26,5 +26,3 @@ class ConvAIDataset(Dataset):
 
     def __getitem__(self, idx):
         pass
-
-s = SquadDataset('data/squad/sq_dev.json')
