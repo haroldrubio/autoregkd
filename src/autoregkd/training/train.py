@@ -24,7 +24,7 @@ def training(config: Dict) -> None:
     """
 
     # Load data
-    train_data = SquadDataset('data/squad/sq_dev.json')
+    train_data = SquadDataset('data/squad/sq_dev.json', debug=True)
     test_data = train_data
 
     # Load model
@@ -52,7 +52,6 @@ def training(config: Dict) -> None:
         args=training_args,                  # training arguments, defined above
         train_dataset=train_data,            # training dataset
         eval_dataset=test_data,               # evaluation dataset
-        compute_metrics=compute_metrics
     )    
 
     trainer.train()

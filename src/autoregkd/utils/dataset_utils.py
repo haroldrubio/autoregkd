@@ -62,16 +62,20 @@ def hf_add_token_positions(encodings, answers, tokenizer):
     start_positions = []
     end_positions = []
     for i in range(len(answers)):
-        start_positions.append(encodings.char_to_token(i, answers[i]['answer_start']))
-        end_positions.append(encodings.char_to_token(i, answers[i]['answer_end']))
+        start_positions.append(encodings.char_to_token(i ,answers[i]['answer_start']))
+        end_positions.append(encodings.char_to_token(i ,answers[i]['answer_end']))
 
         # if start position is None, the answer passage has been truncated
         if start_positions[-1] is None:
             start_positions[-1] = tokenizer.model_max_length
 
         # if end position is None, the 'char_to_token' function points to the space before the correct token - > add + 1
-        if end_positions[-1] is None:
-            end_positions[-1] = encodings.char_to_token(i, answers[i]['answer_end'] + 1)
+        adj_count = 1
+        while end_positions[-1] is None:
+            end_positions[-1] = encodings.char_to_token(i, answers[i]['answer_end'] + adj_count)
+            if adj_count < 0:
+                adj_count += 1
+            adj_count *= -1
     encodings.update({'start_positions': start_positions, 'end_positions': end_positions})
 
 
