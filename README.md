@@ -35,5 +35,5 @@ hypparam_name: str = field(
 Initialize additional schedulers into the `create_optimizer_and_scheduler` function of `CustomTrainer` and step them in the `train` function. \
 Learn with a new loss by changing the `compute_loss` function.
 ### Creating new BART architectures
-Use the encoder/decoder BART layers in `custom_bart.py` to create new encoders/decoders. Then, create a subclass of `BartModel` and override the existing encoder/decoder.
+Use the encoder/decoder BART layers in `custom_bart.py` to create new encoders/decoders. Then, drop in the decoder/encoder into a BART model (BartForConditionalGeneration, BartForQuestionAnswering, etc.)
 
