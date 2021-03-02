@@ -1,11 +1,13 @@
 
 from torch.utils.data.dataset import Dataset
-from transformers import BartForSequenceClassification
+from transformers import BartForQuestionAnswering
 from sklearn.metrics import accuracy_score
 from typing import *
 import wandb
+
 from ..utils.custom_args import CustomArguments
 from ..utils.custom_trainer import CustomTrainer
+from ..utils.dataset import SquadDataset
 
 def compute_metrics(pred):
     labels = pred.label_ids
@@ -22,11 +24,11 @@ def training(config: Dict) -> None:
     """
 
     # Load data
-    train_data = Dataset()
-    test_data = Dataset()
+    train_data = SquadDataset('data/squad/sq_dev.json', debug=True)
+    test_data = train_data
 
     # Load model
-    model = BartForSequenceClassification.from_pretrained('facebook/bart-base', num_labels=2)
+    model = BartForQuestionAnswering.from_pretrained('facebook/bart-base')
 
     # Build directory
     output_dir = f"/runs/results_{config['learning_rate']:.2e}"
@@ -50,7 +52,6 @@ def training(config: Dict) -> None:
         args=training_args,                  # training arguments, defined above
         train_dataset=train_data,            # training dataset
         eval_dataset=test_data,               # evaluation dataset
-        compute_metrics=compute_metrics
     )    
 
     trainer.train()
