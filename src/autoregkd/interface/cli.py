@@ -7,13 +7,13 @@ import click
 @click.option(
     "--log_batch_size",
     type=int,
-    default=6,
+    default=1,
     help="batch size for training will be 2**LOG_BATCH_SIZE",
 )  # Using batch sizes which are 2**n for some integer n may help optimize GPU efficiency
 @click.option(
     "--log_eval_batch_size",
     type=int,
-    default=7,
+    default=1,
     help="batch size for eval will be 2**LOG_EVAL_BATCH_SIZE",
 )  # Using batch sizes which are 2**n for some integer n may help optimize GPU efficiency
 @click.option(
