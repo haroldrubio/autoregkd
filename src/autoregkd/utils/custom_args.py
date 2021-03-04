@@ -23,12 +23,12 @@ class ModelArguments:
     Arguments for model
     """
     model_name: str = field(
-        default="facebook/bart-large",
+        default="facebook/bart-base",
         metadata={"help": "Name of BART model we will copy and fine-tune from (https://huggingface.co/models)"}
     )
 
     tokenizer_name: str = field(
-        default="facebook/bart-large",
+        default="facebook/bart-base",
         metadata={"help": "Name of pre-trained BART tokenizer"}
     )
 
