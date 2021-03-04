@@ -1,4 +1,5 @@
 from os import read
+import sys
 import torch
 import json
 import nltk
@@ -6,10 +7,10 @@ from filelock import FileLock
 import numpy as np
 from transformers import (
     BartTokenizer,
-    BartModel,
     DataCollatorForSeq2Seq
 )
 from torch.utils.data.dataset import Dataset
+import torch.nn.functional as F
 from datasets import load_dataset, load_metric
 with FileLock(".lock") as lock:
     nltk.download("punkt", quiet=True)
@@ -54,9 +55,8 @@ class HF_Dataset():
         # Load dataset
         datasets = load_dataset(data_args.dataset_name)
         self.train_dataset = datasets['train']
-        self.val_dataset = datasets['evaluation'] if 'evaluation' in datasets.keys() else None
+        self.val_dataset = datasets['validation'] if 'validation' in datasets.keys() else None
         self.test_dataset = datasets['test'] if 'test' in datasets.keys() else None
-
         # Do train-test split for ConvAI2 since there's no validation split
 
         # Get column names
@@ -143,6 +143,11 @@ class HF_Dataset():
 
         if isinstance(preds, tuple):
             preds = preds[0]
+
+        # Apply softmax to predictions
+        preds = torch.tensor(preds)
+        preds = F.softmax(preds, dim=2)
+        preds = preds.argmax(dim=2)
 
         # Decode predictions
         decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
