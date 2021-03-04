@@ -1,58 +1,75 @@
+import logging
+from filelock import FileLock
 
-from torch.utils.data.dataset import Dataset
-from transformers import BartForQuestionAnswering
-from sklearn.metrics import accuracy_score
-from typing import *
-import wandb
+from transformers import (
+    BartTokenizer,
+    BartForConditionalGeneration,
+    BartModel,
+    Seq2SeqTrainer,
+    set_seed
+)
+from ..models.custom_bart import DistilBart, DistilBartConfig
+from ..utils.dataset import HF_Dataset
 
-from ..utils.custom_args import CustomArguments
-from ..utils.custom_trainer import CustomTrainer
-from ..utils.dataset import SquadDataset
 
-def compute_metrics(pred):
-    labels = pred.label_ids
-    p1, _ = pred.predictions
-    preds = p1.argmax(1)
-    acc = accuracy_score(labels, preds)
-    return {
-        'accuracy': acc,
-    }
 
-def training(config: Dict) -> None:
-    """
-    config: dict - Contains arguments in the values whose keys are the arguments specified in interface/cli.py
-    """
+logger = logging.getLogger(__name__)
 
-    # Load data
-    train_data = SquadDataset('data/squad/sq_dev.json', debug=True)
-    test_data = train_data
+def training(model_args, data_args, training_args) -> None:
+    # Set seed for replicability
+    set_seed(training_args.seed)
 
-    # Load model
-    model = BartForQuestionAnswering.from_pretrained('facebook/bart-base')
+    # Load dataset
+    data_accessor = HF_Dataset(model_args, data_args)
+    train_dataset, val_dataset, test_dataset, data_collator = data_accessor.access_datasets()
 
-    # Build directory
-    output_dir = f"/runs/results_{config['learning_rate']:.2e}"
-    wandb.init(project='autoregkd', name=output_dir)
+    # DistilBART configuration
+    config = DistilBartConfig.from_pretrained(model_args.model_name)
+    config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
 
-    training_args = CustomArguments(
-        output_dir=output_dir,          # output directory
-        num_train_epochs=config['epochs'],              # total number of training epochs
-        per_device_train_batch_size=2**config['log_batch_size'],  # batch size per device during training
-        per_device_eval_batch_size=2**config['log_eval_batch_size'],   # batch size for evaluation
-        warmup_steps=500,                # number of warmup steps for learning rate scheduler
-        weight_decay=0.01,               # strength of weight decay
-        learning_rate=config['learning_rate'], # learning rate
-        evaluation_strategy='steps',
-        logging_dir='./logs',            # directory for storing logs
-        logging_steps=10,
+    # BART tokenizer
+    tokenizer = BartTokenizer.from_pretrained(model_args.tokenizer_name)
+
+    # DistilBART model
+    # TODO: Change this depending on model_args
+    bart_model = BartModel.from_pretrained(model_args.model_name)
+    distilbart_model = DistilBart(config=config, bart_model=bart_model)
+    gen_model = BartForConditionalGeneration.from_pretrained(model_args.model_name)
+    gen_model.model = distilbart_model
+
+    # Trainer
+    trainer = Seq2SeqTrainer(
+        model=gen_model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        tokenizer=tokenizer,
+        data_collator=data_collator,
+        compute_metrics=data_accessor.compute_metrics
     )
 
-    trainer = CustomTrainer(
-        model=model,                         # the instantiated Transformers model to be trained
-        args=training_args,                  # training arguments, defined above
-        train_dataset=train_data,            # training dataset
-        eval_dataset=test_data,               # evaluation dataset
-    )    
+    # Training
+    logging.info("*** Training ***")
+    train_result = trainer.train(resume_from_checkpoint=None)
+    # trainer.save_model()
 
-    trainer.train()
-    trainer.evaluate()
+    metrics = train_result.metrics
+    max_train_samples = (
+        data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+    )
+    metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+
+    #trainer.log_metrics("train", metrics)
+    #trainer.save_metrics("train", metrics)
+    #trainer.save_state()
+
+    # Evaluation
+    if val_dataset:
+        logging.info("*** Evaluating ***")
+        results = {}
+        metrics = trainer.evaluate(max_length=data_args.max_target_length, num_beams=data_args.num_beams, metric_key_prefix="eval")
+        max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(val_dataset)
+        metrics["eval_samples"] = min(max_val_samples, len(val_dataset))
+
+    #trainer.log_metrics("eval", metrics)
+    #trainer.save_metrics("eval", metrics)
