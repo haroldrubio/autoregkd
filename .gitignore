@@ -1,5 +1,7 @@
 .vscode
+.idea
 data
 logs
 wandb
 __pycache__/
+runs
