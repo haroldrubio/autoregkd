@@ -16,8 +16,10 @@ from filelock import FileLock
 import torch
 import transformers
 from transformers import (
+    BartConfig,
     BartTokenizer,
     BartModel,
+    BartForConditionalGeneration,
     HfArgumentParser,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
@@ -44,6 +46,11 @@ class ModelArguments:
     """
     Arguments for model
     """
+    use_hf_model: bool = field(
+        default=False,
+        metadata={"help": "Whether to use Huggingface's BART model or custom BART model"}
+    )
+
     model_name: str = field(
         default="facebook/bart-large",
         metadata={"help": "Name of BART model we will copy and fine-tune from (https://huggingface.co/models)"}
@@ -94,12 +101,20 @@ class DatasetArguments:
 
     max_source_length: Optional[int] = field(
         default=1024,
-        metadata={"help": "The maximum number of input tokens"},
+        metadata={"help": "The maximum total sequence length for source text after tokenization"},
     )
 
     max_target_length: Optional[int] = field(
         default=128,
-        metadata={"help": "The maximum number of output tokens"},
+        metadata={"help": "The maximum total sequence length for target text after tokenization"},
+    )
+
+    val_max_target_length: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The maximum total sequence length for validation target text after tokenization. "
+                    "Default to max_target_length"
+        },
     )
 
     pad_to_max_length: bool = field(
@@ -139,8 +154,14 @@ class DatasetArguments:
         metadata={"help": "Number of beams used in beam search during evaluation and prediction steps "},
     )
 
+    def __post_init__(self):
+        if self.val_max_target_length is None:
+            self.val_max_target_length = self.max_target_length
+
 
 def main():
+    print("GPUs available: {}. Number of GPUs: {}".format(torch.cuda.is_available(), torch.cuda.device_count()))
+
     parser = HfArgumentParser((ModelArguments, DatasetArguments, Seq2SeqTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
@@ -153,32 +174,43 @@ def main():
     # Load dataset
     datasets = load_dataset(data_args.dataset_name)
     train_dataset = datasets['train']
-    val_dataset = datasets['evaluation'] if 'evaluation' in datasets.keys() else None
+    eval_dataset = datasets['evaluation'] if 'evaluation' in datasets.keys() else None
     test_dataset = datasets['test'] if 'test' in datasets.keys() else None
 
     # Do train-test split for ConvAI2 since there's no validation split
-    if not val_dataset:
+    if not eval_dataset:
         pass
 
     # Get column names
-    column_names = train_dataset.column_names
-    if val_dataset:
-        assert column_names == val_dataset.column_names
-    if test_dataset:
-        assert column_names == test_dataset.column_names
-
-    # DistilBART configuration
-    config = DistilBartConfig(
-        encoder_layer_indices=list(model_args.encoder_layer_indices),
-        decoder_layer_indices=list(model_args.decoder_layer_indices)
-    )
+    if training_args.do_train:
+        column_names = datasets["train"].column_names
+    elif training_args.do_eval:
+        column_names = datasets["validation"].column_names
+    elif training_args.do_predict:
+        column_names = datasets["test"].column_names
+    else:
+        logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
+        return
 
     # BART tokenizer
     tokenizer = BartTokenizer.from_pretrained(model_args.tokenizer_name)
 
-    # DistilBART model
-    bart_model = BartModel.from_pretrained(model_args.model_name)
-    distilbart_model = DistilBart(config=config, bart_model=bart_model)
+    if model_args.use_hf_model:
+        # Load a pre-trained checkpoint for BART
+        config = BartConfig()
+        student_model = BartForConditionalGeneration(config=config).from_pretrained(model_args.model_name)
+
+    else:
+        # Create a DistilBart model with layers copied from the original BART model
+        # DistilBART configuration
+        config = DistilBartConfig(
+            encoder_layer_indices=list(model_args.encoder_layer_indices),
+            decoder_layer_indices=list(model_args.decoder_layer_indices)
+        )
+
+        # DistilBART model
+        teacher_model = BartModel.from_pretrained(model_args.model_name)
+        student_model = DistilBart(config=config, bart_model=teacher_model)
 
     # Max lengths
     max_source_length = data_args.max_source_length
@@ -186,6 +218,11 @@ def main():
     padding = "max_length" if data_args.pad_to_max_length else False
 
     def preprocess_xsum(examples):
+        """
+        Pre-process examples from XSum
+        :param examples:
+        :return:
+        """
         inputs = examples["document"]
         targets = examples["summary"]
 
@@ -204,7 +241,7 @@ def main():
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
 
-    if train_dataset:
+    if training_args.do_train:
         if data_args.max_train_samples is not None:
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
         train_dataset = train_dataset.map(
@@ -215,10 +252,16 @@ def main():
             load_from_cache_file=not data_args.overwrite_cache
         )
 
-    if val_dataset:
+    if training_args.do_eval:
+        max_target_length = data_args.val_max_target_length
+
+        if not eval_dataset:
+            raise ValueError("No eval dataset available.")
+            return
+
         if data_args.max_val_samples is not None:
-            val_dataset = val_dataset.select(range(data_args.max_val_samples))
-        val_dataset = val_dataset.map(
+            eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
+        eval_dataset = eval_dataset.map(
             preprocess_xsum,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
@@ -226,7 +269,13 @@ def main():
             load_from_cache_file=not data_args.overwrite_cache
         )
 
-    if test_dataset:
+    if training_args.do_predict:
+        max_target_length = data_args.val_max_target_length
+
+        if not test_dataset:
+            raise ValueError("No test dataset available.")
+            return
+
         if data_args.max_test_samples is not None:
             test_dataset = test_dataset.select(range(data_args.max_test_samples))
         test_dataset = test_dataset.map(
@@ -244,16 +293,18 @@ def main():
     else:
         data_collator = DataCollatorForSeq2Seq(
             tokenizer=tokenizer,
+            model=student_model,
             label_pad_token_id=label_pad_token_id,
-            pad_to_multiple_of=None,
+            pad_to_multiple_of=None
         )
 
     if data_args.task == "summarization":
         metric_name = "rouge"
     elif data_args.task == "question-answering":
         metric_name = "f1"
-    elif data_args.task == "ialogue-generation":
+    elif data_args.task == "dialogue-generation":
         metric_name = "f1"
+        # TODO: Add perplexity
     else:
         raise ValueError("Unsupported task")
 
@@ -266,73 +317,113 @@ def main():
 
             preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
             labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
+        else:
+            pass
 
         return preds, labels
 
     def compute_metrics(eval_preds):
         preds, labels = eval_preds
-
         if isinstance(preds, tuple):
             preds = preds[0]
-
-        # Decode predictions
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-
-        # Decode labels
         if data_args.ignore_pad_token_for_loss:
+            # Replace -100 in the labels as we can't decode them.
             labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
 
-        # Preprocess
+        # Some simple post-processing
         decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
 
         if metric_name == "rouge":
             result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
+            # Extract a few results from ROUGE
             result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
         else:
-            result = {}
+            result = metric.compute(predictions=decoded_preds, references=decoded_labels)
+            result = {"bleu": result["score"]}
 
         prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
         result["gen_len"] = np.mean(prediction_lens)
-        result = {key: round(value, 4) for key, value in result.items()}
-
+        result = {k: round(v, 4) for k, v in result.items()}
         return result
 
     # Trainer
     trainer = Seq2SeqTrainer(
-        model=distilbart_model,
+        model=student_model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=val_dataset,
+        eval_dataset=eval_dataset,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_metrics
+        compute_metrics=compute_metrics if training_args.predict_with_generate else None
     )
 
     # Training
-    logging("*** Training ***")
-    train_result = trainer.train(resume_from_checkpoint=None)
-    trainer.save_model()
+    if training_args.do_train:
+        logging.info("*** Training ***")
+        train_result = trainer.train(
+            resume_from_checkpoint=None
+        )
+        trainer.save_model()
 
-    metrics = train_result.metrics
-    max_train_samples = (
-        data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-    )
-    metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+        metrics = train_result.metrics
+        max_train_samples = (
+            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+        )
+        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
-    trainer.log_metrics("train", metrics)
-    trainer.save_metrics("train", metrics)
-    trainer.save_state()
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
 
     # Evaluation
-    logging.info("*** Evaluating ***")
     results = {}
-    metrics = trainer.evaluate(max_length=max_target_length, num_beams=data_args.num_beams, metric_key_prefix="eval")
-    max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(val_dataset)
-    metrics["eval_samples"] = min(max_val_samples, len(val_dataset))
+    if training_args.do_eval:
+        logging.info("*** Evaluating ***")
 
-    trainer.log_metrics("eval", metrics)
-    trainer.save_metrics("eval", metrics)
+        metrics = trainer.evaluate(
+            max_length=max_target_length,
+            num_beams=data_args.num_beams,
+            metric_key_prefix="eval"
+        )
+
+        max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(eval_dataset)
+        metrics["eval_samples"] = min(max_val_samples, len(eval_dataset))
+
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+
+    # Testing
+    if training_args.do_predict:
+        logging.info("*** Testing ***")
+
+        test_results = trainer.predict(
+            test_dataset,
+            max_length=data_args.val_max_target_length,
+            num_beams=data_args.num_beams,
+            metric_key_prefix="test"
+        )
+
+        metrics = test_results.metrics
+        print(metrics)
+        max_test_samples = data_args.max_test_samples if data_args.max_test_samples is not None else len(test_dataset)
+        metrics["test_samples"] = min(max_test_samples, len(test_dataset))
+
+        trainer.log_metrics("test", metrics)
+        trainer.save_metrics("test", metrics)
+
+        if trainer.is_world_process_zero():
+            if training_args.predict_with_generate:
+                test_preds = tokenizer.batch_decode(
+                    test_results.predictions,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True
+                )
+                test_preds = [pred.strip() for pred in test_preds]
+                output_test_preds_file = os.path.join(training_args.output_dir, "test_generations.txt")
+                with open(output_test_preds_file, "w") as writer:
+                    writer.write("\n".join(test_preds))
 
     return results
 

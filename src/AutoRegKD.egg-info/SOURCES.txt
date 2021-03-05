@@ -1,0 +1,6 @@
+README.md
+setup.py
+src/AutoRegKD.egg-info/PKG-INFO
+src/AutoRegKD.egg-info/SOURCES.txt
+src/AutoRegKD.egg-info/dependency_links.txt
+src/AutoRegKD.egg-info/top_level.txt
