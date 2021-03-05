@@ -23,6 +23,7 @@ from transformers import (
     HfArgumentParser,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
+    EarlyStoppingCallback,
     DataCollatorForSeq2Seq,
     default_data_collator,
     set_seed
@@ -173,9 +174,13 @@ def main():
 
     # Load dataset
     datasets = load_dataset(data_args.dataset_name)
-    train_dataset = datasets['train']
-    eval_dataset = datasets['evaluation'] if 'evaluation' in datasets.keys() else None
-    test_dataset = datasets['test'] if 'test' in datasets.keys() else None
+
+    if training_args.do_train:
+        train_dataset = datasets['train']
+    if training_args.do_eval:
+        eval_dataset = datasets['validation'] if 'validation' in datasets.keys() else None
+    if training_args.do_predict:
+        test_dataset = datasets['test'] if 'test' in datasets.keys() else None
 
     # Do train-test split for ConvAI2 since there's no validation split
     if not eval_dataset:
@@ -306,7 +311,7 @@ def main():
         metric_name = "f1"
         # TODO: Add perplexity
     else:
-        raise ValueError("Unsupported task")
+        raise ValueError("Unsupported task.")
 
     metric = load_metric(metric_name)
 
@@ -318,7 +323,7 @@ def main():
             preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
             labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
         else:
-            pass
+            raise ValueError("Unsupported task.")
 
         return preds, labels
 
@@ -348,6 +353,15 @@ def main():
         result = {k: round(v, 4) for k, v in result.items()}
         return result
 
+    # Eval steps (should be 4 times per epoch)
+    training_args.eval_steps = round(len(train_dataset) / training_args.train_batch_size / 4.)
+
+    from transformers import TrainerCallback
+
+    class PrintCallback(TrainerCallback):
+        def on_evaluate(self, args, state, control, **kwargs):
+            print("Evaluating")
+
     # Trainer
     trainer = Seq2SeqTrainer(
         model=student_model,
@@ -359,12 +373,15 @@ def main():
         compute_metrics=compute_metrics if training_args.predict_with_generate else None
     )
 
+    # Early-stopping callback
+    early_stopping = EarlyStoppingCallback(early_stopping_patience=4)
+    trainer.add_callback(early_stopping)
+    trainer.add_callback(PrintCallback())
+
     # Training
     if training_args.do_train:
         logging.info("*** Training ***")
-        train_result = trainer.train(
-            resume_from_checkpoint=None
-        )
+        train_result = trainer.train()
         trainer.save_model()
 
         metrics = train_result.metrics
@@ -385,8 +402,7 @@ def main():
         metrics = trainer.evaluate(
             max_length=max_target_length,
             num_beams=data_args.num_beams,
-            metric_key_prefix="eval"
-        )
+            metric_key_prefix="eval")
 
         max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(eval_dataset)
         metrics["eval_samples"] = min(max_val_samples, len(eval_dataset))

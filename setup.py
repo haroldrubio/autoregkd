@@ -8,9 +8,10 @@ setup(
     package=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
     package_dir={"": "src"},
     description="Scripts to train DistilBART",
-    entry_point={
+    entry_points={
         "console_scripts": [
-            "autoregkd = autoregkd.__main__: main"
+            "autoregkd = autoregkd.__main__:main",
+            "train_distilbart = autoregkd.training.train_distilbart:main"
         ]
     }
 )

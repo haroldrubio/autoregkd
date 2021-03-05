@@ -5,3 +5,5 @@ wandb
 .idea
 
 *.egg-info/
+
+.lock
