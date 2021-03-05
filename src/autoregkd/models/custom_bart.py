@@ -14,6 +14,7 @@
 # limitations under the License.
 """ PyTorch BART model. """
 import copy
+import torch
 from typing import Optional
 import torch.nn.functional as F
 from torch import nn
@@ -23,8 +24,7 @@ from transformers.models.bart.modeling_bart import (
     BartDecoder,
     BartModel
 )
-from transformers.utils import logging
-from transformers.utils.dummy_pt_objects import BartForConditionalGeneration, BartPretrainedModel
+
 
 class DistilBartConfig(BartConfig):
     def __init__(self,
@@ -143,3 +143,37 @@ class DistilBart(BartModel):
 
         self.encoder = DistilBartEncoder(config=config, bart_encoder=bart_model.encoder, embed_tokens=self.shared)
         self.decoder = DistilBartDecoder(config=config, bart_decoder=bart_model.decoder, embed_tokens=self.shared)
+
+class InterpolationModule(nn.Module):
+    """
+    This module contains no parameters and performs a swapping operation on the hidden unit level
+    between two inputs of the same shape
+    """
+    def __init__(self):
+        super().__init__()
+    def forward(self, parent_in, student_in, swap_prob=0.5):
+        """
+            Args:
+                parent_in (torch.tensor): An input tensor from path 1
+                student_in (torch.tensor): An input tensor from path 2
+                swap_prob (float): The probability of an activation to swap paths
+
+            Returns:
+                (parent_out, student_out) (tuple): The interpolated hidden states
+        """
+        # Obtain a common shape
+        common_shape = parent_in.shape
+        assert common_shape == student_in.shape
+
+        # Generate mask
+        rand_tensor = torch.rand(common_shape)
+        swapping_mask = torch.zeros(common_shape)
+        swapping_mask[rand_tensor <= swap_prob] = 1
+        staying_mask = torch.abs(swapping_mask - 1)
+        del rand_tensor
+
+        # Create two output tensors
+        parent_out = staying_mask * parent_in + swapping_mask * student_in
+        student_out = staying_mask * student_in + swapping_mask * parent_in
+
+        return (parent_out, student_out)
