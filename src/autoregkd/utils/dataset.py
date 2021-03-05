@@ -1,7 +1,5 @@
 from os import read
-import sys
 import torch
-import json
 import nltk
 from filelock import FileLock
 import numpy as np
@@ -48,6 +46,12 @@ class QA_Dataset():
         self.val_dataset = datasets['validation'] if 'validation' in datasets.keys() else None
         self.raw_val_dataset = datasets['validation']  if 'validation' in datasets.keys() else None
 
+        # Constrain datasets
+        if self.data_args.max_train_samples is not None:
+                self.train_dataset = self.train_dataset.select(range(self.data_args.max_train_samples))
+        if self.data_args.max_val_samples is not None:
+                self.val_dataset = self.val_dataset.select(range(self.data_args.max_val_samples))
+                self.raw_val_dataset = self.raw_val_dataset.select(range(self.data_args.max_val_samples))
         # Get column names
         self.train_column_names = self.train_dataset.column_names
         self.val_column_names = self.val_dataset.column_names
@@ -57,8 +61,6 @@ class QA_Dataset():
     def access_datasets(self):
         train_dataset = None
         if self.train_dataset:
-            if self.data_args.max_train_samples is not None:
-                self.train_dataset = self.train_dataset.select(range(self.data_args.max_train_samples))
             column_names = self.train_column_names
             train_dataset = self.train_dataset.map(
                 self._pre_process_train,
@@ -70,8 +72,7 @@ class QA_Dataset():
 
         val_dataset = None
         if self.val_dataset:
-            if self.data_args.max_val_samples is not None:
-                self.val_dataset = self.val_dataset.select(range(self.data_args.max_val_samples))
+            column_names = self.val_column_names
             val_dataset = self.val_dataset.map(
                 self._pre_process_valid,
                 batched=True,

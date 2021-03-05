@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 import numpy as np
 from tqdm.auto import tqdm
 
-logger = logging.getLogger(__name__)
+#logger = logging.getLogger(__name__)
 
 def postprocess_qa_predictions(
     examples,
@@ -70,8 +70,8 @@ def postprocess_qa_predictions(
         scores_diff_json = collections.OrderedDict()
 
     # Logging.
-    logger.setLevel(logging.INFO if is_world_process_zero else logging.WARN)
-    logger.info(f"Post-processing {len(examples)} example predictions split into {len(features)} features.")
+    # logger.setLevel(logging.INFO if is_world_process_zero else logging.WARN)
+    # logger.info(f"Post-processing {len(examples)} example predictions split into {len(features)} features.")
 
     # Let's loop over all the examples!
     for example_index, example in enumerate(tqdm(examples)):
@@ -203,7 +203,8 @@ def postprocess_qa_predictions(
             null_odds_file = os.path.join(
                 output_dir, "null_odds.json" if prefix is None else f"null_odds_{prefix}".json
             )
-
+        
+        '''
         logger.info(f"Saving predictions to {prediction_file}.")
         with open(prediction_file, "w") as writer:
             writer.write(json.dumps(all_predictions, indent=4) + "\n")
@@ -214,5 +215,6 @@ def postprocess_qa_predictions(
             logger.info(f"Saving null_odds to {null_odds_file}.")
             with open(null_odds_file, "w") as writer:
                 writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
+        '''
 
     return all_predictions

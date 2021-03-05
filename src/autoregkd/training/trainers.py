@@ -3,7 +3,6 @@
 """
 A subclass of `Trainer` specific to Question-Answering tasks
 """
-
 from transformers import Trainer, is_datasets_available
 from transformers.trainer_utils import PredictionOutput
 
@@ -43,7 +42,9 @@ class QuestionAnsweringTrainer(Trainer):
             eval_dataset.set_format(type=eval_dataset.format["type"], columns=list(eval_dataset.features.keys()))
 
         if self.post_process_function is not None and self.compute_metrics is not None:
-            eval_preds = self.post_process_function(eval_examples, eval_dataset, output.predictions)
+            start_logits, end_logits, _ = output.predictions
+            real_preds = (start_logits, end_logits)
+            eval_preds = self.post_process_function(eval_examples, eval_dataset, real_preds)
             metrics = self.compute_metrics(eval_preds)
 
             self.log(metrics)

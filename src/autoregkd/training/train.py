@@ -68,23 +68,23 @@ def training(model_args, data_args, training_args) -> None:
     train_result = trainer.train(resume_from_checkpoint=None)
     # trainer.save_model()
 
-    metrics = train_result.metrics
-    max_train_samples = (
-        data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-    )
-    metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+    #metrics = train_result.metrics
+    #max_train_samples = (
+    #    data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+    #)
+    #metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
     #trainer.log_metrics("train", metrics)
     #trainer.save_metrics("train", metrics)
     #trainer.save_state()
 
     # Evaluation
-    if val_dataset:
-        logging.info("*** Evaluating ***")
-        results = {}
-        metrics = trainer.evaluate(max_length=data_args.max_target_length, num_beams=data_args.num_beams, metric_key_prefix="eval")
-        max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(val_dataset)
-        metrics["eval_samples"] = min(max_val_samples, len(val_dataset))
+    #if val_dataset:
+    #    logging.info("*** Evaluating ***")
+    #    results = {}
+    #    metrics = trainer.evaluate(max_length=data_args.max_target_length, num_beams=data_args.num_beams, metric_key_prefix="eval")
+    #    max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(val_dataset)
+    #    metrics["eval_samples"] = min(max_val_samples, len(val_dataset))
 
     #trainer.log_metrics("eval", metrics)
     #trainer.save_metrics("eval", metrics)
