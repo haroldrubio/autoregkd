@@ -13,6 +13,7 @@ from transformers import (
 )
 from torch.utils.data.dataset import Dataset
 import torch.nn.functional as F
+from scipy.special import softmax
 from datasets import load_dataset, load_metric
 with FileLock(".lock") as lock:
     nltk.download("punkt", quiet=True)
@@ -55,7 +56,11 @@ class QA_Dataset():
         # Get column names
         self.train_column_names = self.train_dataset.column_names
         self.val_column_names = self.val_dataset.column_names
-    
+
+        # Check task
+        if not data_args.task == "question-answering":
+            raise ValueError("Unsupported task")
+
         self.metric = load_metric("squad_v2" if data_args.version_2_with_negative else "squad")
     
     def access_datasets(self):
@@ -332,11 +337,13 @@ class Gen_Dataset():
             preds = preds[0]
 
         # Apply softmax to predictions
-        preds = torch.tensor(preds)
-        preds = F.softmax(preds, dim=2)
-        preds = preds.argmax(dim=2)
+        # COMMENTED OUT: ASSUME PREDS NOT LOGITS
+        # preds = softmax(preds, axis=2)
+        # preds = np.argmax(preds, axis=2)
 
         # Decode predictions
+        #print(len(preds))
+        #print(preds.shape)
         decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
 
         # Decode labels

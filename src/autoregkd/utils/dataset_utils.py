@@ -188,7 +188,7 @@ def postprocess_qa_predictions(
             {k: (float(v) if isinstance(v, (np.float16, np.float32, np.float64)) else v) for k, v in pred.items()}
             for pred in predictions
         ]
-
+    '''
     # If we have an output_dir, let's save all those dicts.
     if output_dir is not None:
         assert os.path.isdir(output_dir), f"{output_dir} is not a directory."
@@ -204,7 +204,7 @@ def postprocess_qa_predictions(
                 output_dir, "null_odds.json" if prefix is None else f"null_odds_{prefix}".json
             )
         
-        '''
+    
         logger.info(f"Saving predictions to {prediction_file}.")
         with open(prediction_file, "w") as writer:
             writer.write(json.dumps(all_predictions, indent=4) + "\n")
@@ -215,6 +215,6 @@ def postprocess_qa_predictions(
             logger.info(f"Saving null_odds to {null_odds_file}.")
             with open(null_odds_file, "w") as writer:
                 writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
-        '''
+    '''
 
     return all_predictions

@@ -10,7 +10,7 @@ from transformers import (
     Seq2SeqTrainer,
     set_seed
 )
-from .trainers import QuestionAnsweringTrainer
+from .trainers import QuestionAnsweringTrainer, Seq2SeqTrainer
 from ..models.custom_bart import DistilBart, DistilBartConfig
 from ..utils.dataset import Gen_Dataset, QA_Dataset
 
@@ -27,6 +27,7 @@ def training(model_args, data_args, training_args) -> None:
     distilbart_model = DistilBart(config=config, bart_model=bart_model)
 
     # Load dataset
+    curr_model = None
     if data_args.task == 'summarization':
         data_accessor = Gen_Dataset(model_args, data_args)
         train_dataset, val_dataset, test_dataset, data_collator = data_accessor.access_datasets()
@@ -37,6 +38,8 @@ def training(model_args, data_args, training_args) -> None:
         train_dataset, val_dataset, data_collator = data_accessor.access_datasets()
         curr_model = BartForQuestionAnswering.from_pretrained(model_args.model_name)
         tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
+    else:
+        raise ValueError("Unsupported task")
 
     curr_model.model = distilbart_model
 
@@ -66,6 +69,8 @@ def training(model_args, data_args, training_args) -> None:
     # Training
     logging.info("*** Training ***")
     train_result = trainer.train(resume_from_checkpoint=None)
+    r = trainer.evaluate(val_dataset)
+    print(r)
     # trainer.save_model()
 
     #metrics = train_result.metrics
@@ -82,9 +87,8 @@ def training(model_args, data_args, training_args) -> None:
     #if val_dataset:
     #    logging.info("*** Evaluating ***")
     #    results = {}
-    #    metrics = trainer.evaluate(max_length=data_args.max_target_length, num_beams=data_args.num_beams, metric_key_prefix="eval")
-    #    max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(val_dataset)
+    #   max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(val_dataset)
     #    metrics["eval_samples"] = min(max_val_samples, len(val_dataset))
-
+    #print(metrics)
     #trainer.log_metrics("eval", metrics)
     #trainer.save_metrics("eval", metrics)
