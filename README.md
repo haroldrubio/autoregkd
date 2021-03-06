@@ -1,6 +1,7 @@
 # Knowledge Distillation For Generative Autoregressive Models
 ## Execution
-Run an experiment with `python run_experiment.py` where the command line arguments are specified in `src/autoregkd/interface/cli.py`
+Run an experiment with `python run_experiment.py` where the command line arguments are specified in `src/autoregkd/utils/custom_args.py`
+and the HuggingFace [Trainer](https://huggingface.co/transformers/main_classes/trainer.html#Seq2SeqTrainingArguments) documentation
 ### Weights and Biases Logging and Sweeping
 Log into W and B by running `wandb login` in the command line and pasting your API key \
 The Huggingface trainer has direct logging integration with Weights and Biases
