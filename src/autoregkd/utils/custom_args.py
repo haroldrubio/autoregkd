@@ -42,6 +42,11 @@ class ModelArguments:
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
     )
 
+    save_final: bool = field(
+        default=False,
+        metadata={"help": "Save the final model after training and/or evaluating"}
+    )
+
 
 @dataclass
 class DatasetArguments:

@@ -75,3 +75,5 @@ def training(model_args, data_args, training_args) -> None:
         trainer.train(resume_from_checkpoint=None)
     if training_args.do_eval:
         trainer.evaluate(val_dataset)
+    if model_args.save_final:
+        trainer.save_model()
