@@ -5,5 +5,4 @@ logs
 wandb
 __pycache__/
 runs
-/cli_files/
 *.egg-info/
