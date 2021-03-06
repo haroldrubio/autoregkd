@@ -23,12 +23,12 @@ class ModelArguments:
     Arguments for model
     """
     model_name: str = field(
-        default="facebook/bart-large",
+        default="facebook/bart-base",
         metadata={"help": "Name of BART model we will copy and fine-tune from (https://huggingface.co/models)"}
     )
 
     tokenizer_name: str = field(
-        default="facebook/bart-large",
+        default="facebook/bart-base",
         metadata={"help": "Name of pre-trained BART tokenizer"}
     )
 
@@ -40,6 +40,11 @@ class ModelArguments:
     decoder_layer_indices: Tuple = field(
         default=(0, 2, 5),
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
+    )
+
+    save_final: bool = field(
+        default=False,
+        metadata={"help": "Save the final model after training and/or evaluating"}
     )
 
 
@@ -111,8 +116,41 @@ class DatasetArguments:
                     "value if set."
         },
     )
-
     num_beams: Optional[int] = field(
         default=None,
         metadata={"help": "Number of beams used in beam search during evaluation and prediction steps "},
+    )
+    # ==== QA ARGS ====
+    max_seq_length: int = field(
+        default=384,
+        metadata={
+            "help": "FOR QA: The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    version_2_with_negative: bool = field(
+        default=False, metadata={"help": "FOR QA: If true, some of the examples do not have an answer."}
+    )
+    null_score_diff_threshold: float = field(
+        default=0.0,
+        metadata={
+            "help": "FOR QA: The threshold used to select the null answer: if the best answer has a score that is less than "
+            "the score of the null answer minus this threshold, the null answer is selected for this example. "
+            "Only useful when `version_2_with_negative=True`."
+        },
+    )
+    doc_stride: int = field(
+        default=128,
+        metadata={"help": "FOR QA: When splitting up a long document into chunks, how much stride to take between chunks."},
+    )
+    n_best_size: int = field(
+        default=20,
+        metadata={"help": "FOR QA: The total number of n-best predictions to generate when looking for an answer."},
+    )
+    max_answer_length: int = field(
+        default=30,
+        metadata={
+            "help": "FOR QA: The maximum length of an answer that can be generated. This is needed because the start "
+            "and end predictions are not conditioned on one another."
+        },
     )
