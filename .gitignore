@@ -6,3 +6,8 @@ wandb
 __pycache__/
 runs
 cli_files/
+.idea
+
+*.egg-info/
+
+.lock
