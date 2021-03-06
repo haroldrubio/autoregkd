@@ -1,0 +1,10 @@
+{
+  "task": "question-answering",
+  "tokenizer_name": "google/electra-base-discriminator",
+  "dataset_name": "squad_v2",
+  "output_dir": "electra_qa_v2_test",
+  "model_name": "deepset/electra-base-squad2",
+  "evaluation_strategy": "steps",
+  "seed": 42,
+  "version_2_with_negative": true
+}

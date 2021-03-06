@@ -5,9 +5,5 @@ logs
 wandb
 __pycache__/
 runs
-cli_files/
-.idea
-
+/cli_files/
 *.egg-info/
-
-.lock

@@ -1,0 +1,10 @@
+{
+  "task": "question-answering",
+  "tokenizer_name": "distilbert-base-uncased",
+  "dataset_name": "squad",
+  "output_dir": "bart_qa_test",
+  "model_name": "facebook/bart-base",
+  "evaluation_strategy": "steps",
+  "seed": 42,
+  "version_2_with_negative": false
+}
