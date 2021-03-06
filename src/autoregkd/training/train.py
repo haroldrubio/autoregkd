@@ -2,6 +2,8 @@ import logging
 from filelock import FileLock
 
 from transformers import (
+    ElectraTokenizerFast,
+    ElectraForQuestionAnswering,
     BartTokenizer,
     BartTokenizerFast,
     BartForConditionalGeneration,
@@ -21,11 +23,12 @@ def training(model_args, data_args, training_args) -> None:
     set_seed(training_args.seed)
 
     # DistilBART configuration
+    
     config = DistilBartConfig.from_pretrained(model_args.model_name)
     config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
     bart_model = BartModel.from_pretrained(model_args.model_name)
     distilbart_model = DistilBart(config=config, bart_model=bart_model)
-
+    
     # Load dataset
     curr_model = None
     if data_args.task == 'summarization':
@@ -40,7 +43,7 @@ def training(model_args, data_args, training_args) -> None:
         tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
     else:
         raise ValueError("Unsupported task")
-
+    
     curr_model.model = distilbart_model
 
     # Trainer
@@ -67,28 +70,8 @@ def training(model_args, data_args, training_args) -> None:
             compute_metrics=data_accessor.compute_metrics,
         )
     # Training
-    logging.info("*** Training ***")
-    train_result = trainer.train(resume_from_checkpoint=None)
-    r = trainer.evaluate(val_dataset)
-    print(r)
-    # trainer.save_model()
 
-    #metrics = train_result.metrics
-    #max_train_samples = (
-    #    data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-    #)
-    #metrics["train_samples"] = min(max_train_samples, len(train_dataset))
-
-    #trainer.log_metrics("train", metrics)
-    #trainer.save_metrics("train", metrics)
-    #trainer.save_state()
-
-    # Evaluation
-    #if val_dataset:
-    #    logging.info("*** Evaluating ***")
-    #    results = {}
-    #   max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(val_dataset)
-    #    metrics["eval_samples"] = min(max_val_samples, len(val_dataset))
-    #print(metrics)
-    #trainer.log_metrics("eval", metrics)
-    #trainer.save_metrics("eval", metrics)
+    if training_args.do_train:
+        trainer.train(resume_from_checkpoint=None)
+    if training_args.do_eval:
+        trainer.evaluate(val_dataset)
