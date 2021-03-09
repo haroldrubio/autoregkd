@@ -18,13 +18,14 @@ def experiment(**config):
 
     # Parse indices arguments
     # encoder_layer_indices
-    e_indices = model_args.encoder_layer_indices.split(',')
-    d_indices = model_args.decoder_layer_indices.split(',')
+    if type(model_args.encoder_layer_indices) == str:
+        e_indices = model_args.encoder_layer_indices.split(',')
+        d_indices = model_args.decoder_layer_indices.split(',')
 
-    e_indices = [int(ele) for ele in e_indices]
-    d_indices = [int(ele) for ele in d_indices]
+        e_indices = [int(ele) for ele in e_indices]
+        d_indices = [int(ele) for ele in d_indices]
 
-    model_args.encoder_layer_indices = e_indices
-    model_args.decoder_layer_indices = d_indices
+        model_args.encoder_layer_indices = e_indices
+        model_args.decoder_layer_indices = d_indices
 
     training(model_args, data_args, training_args)

@@ -144,9 +144,6 @@ class Seq2SeqTrainer(SeqTrainer):
                 losses = loss.repeat(batch_size)
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             if logits is not None:
-                #real_preds = F.softmax(logits, dim=2)
-                #real_preds = torch.argmax(real_preds, dim=2)
-                #real_preds = self.tokenizer.batch_decode(logits, skip_special_tokens=True)
                 preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
             if labels is not None:
                 labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
