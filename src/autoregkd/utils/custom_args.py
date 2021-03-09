@@ -32,13 +32,13 @@ class ModelArguments:
         metadata={"help": "Name of pre-trained BART tokenizer"}
     )
 
-    encoder_layer_indices: Tuple = field(
-        default=(0, 1, 2, 3, 4, 5),
+    encoder_layer_indices: str = field(
+        default='0,1,2,3,4,5',
         metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
     )
 
-    decoder_layer_indices: Tuple = field(
-        default=(0, 2, 5),
+    decoder_layer_indices: str = field(
+        default='0, 2, 5',
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
     )
 
