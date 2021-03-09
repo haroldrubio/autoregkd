@@ -142,6 +142,8 @@ class DistilBart(BartModel):
         super().__init__(config)
 
         self.encoder = DistilBartEncoder(config=config, bart_encoder=bart_model.encoder, embed_tokens=self.shared)
+        for param in self.encoder.parameters():
+            param.requires_grad = False
         self.decoder = DistilBartDecoder(config=config, bart_decoder=bart_model.decoder, embed_tokens=self.shared)
 
 class InterpolationModule(nn.Module):
