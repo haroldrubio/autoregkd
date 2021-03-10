@@ -2,13 +2,34 @@ program: run_experiment.py
 command:
   - ${interpreter}
   - ${program}
+  - "--task=question-answering"
+  - "--dataset_name=squad_v2"
+  - "--output_dir=hyp_distilbart_squad_v2"
+  - "--model_name=facebook/bart-large"
+  - "--encoder_layer_indices=0,1,2,3,4,5,6,7,8,9,10,11"
+  - "--decoder_layer_indices=0,6,11"
+  - "--lr_scheduler_type=constant"
+  - "--per_device_eval_batch_size=4"
+  - "--per_device_train_batch_size=8"
+  - "--num_train_epochs=1"
+  - "--save_total_limit=0"
+  - "--save_steps=-1"
+  - "--logging_steps=100"
+  - "--do_train=true"
+  - "--evaluation_strategy=epoch"
+  - "--version_2_with_negative=true"
+  - "--seed=42"
   - ${args}
 method: bayes
 metric:
   goal: minimize
-  name: 'eval/loss'
+  name: 'train/loss'
 parameters:
   learning_rate:
     distribution: log_uniform
-    max: -4
+    max: -3
+    min: -7
+  weight_decay:
+    distribution: log_uniform
+    max: -2
     min: -6
