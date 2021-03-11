@@ -33,4 +33,9 @@ parameters:
   weight_decay:
     distribution: log_uniform
     max: -2
-    min: -6
+    min: -7
+early_terminate:
+  type: hyperband
+  s: 2
+  eta: 3
+  max_iter: 27
