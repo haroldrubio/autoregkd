@@ -113,10 +113,13 @@ class DistilBartEncoder(BartEncoder):
                  embed_tokens: Optional[nn.Embedding] = None
                  ):
         super().__init__(config=config, embed_tokens=embed_tokens)
+        # Copy structural layers and some of the transformer layers
         self.layers = nn.ModuleList()
         for i in config.encoder_layer_indices:
             self.layers.append(copy.deepcopy(bart_encoder.layers[i]))
-
+        self.embed_tokens = copy.deepcopy(bart_encoder.embed_tokens)
+        self.embed_positions = copy.deepcopy(bart_encoder.embed_positions)
+        self.layernorm_embedding = copy.deepcopy(bart_encoder.layernorm_embedding)
 
 class DistilBartDecoder(BartDecoder):
     """
@@ -127,9 +130,13 @@ class DistilBartDecoder(BartDecoder):
                  embed_tokens: Optional[nn.Embedding] = None
                  ):
         super().__init__(config=config, embed_tokens=embed_tokens)
+        # Copy structural layers and some of the transformer layers
         self.layers = nn.ModuleList()
         for i in config.decoder_layer_indices:
             self.layers.append(copy.deepcopy(bart_decoder.layers[i]))
+        self.embed_tokens = copy.deepcopy(bart_decoder.embed_tokens)
+        self.embed_positions = copy.deepcopy(bart_decoder.embed_positions)
+        self.layernorm_embedding = copy.deepcopy(bart_decoder.layernorm_embedding)
 
 
 class DistilBart(BartModel):
@@ -140,9 +147,11 @@ class DistilBart(BartModel):
                  bart_model: BartModel
                  ):
         super().__init__(config)
-
+        self.shared = bart_model.shared
         self.encoder = DistilBartEncoder(config=config, bart_encoder=bart_model.encoder, embed_tokens=self.shared)
         for param in self.encoder.parameters():
+            param.requires_grad = False
+        for param in self.shared.parameters():
             param.requires_grad = False
         self.decoder = DistilBartDecoder(config=config, bart_decoder=bart_model.decoder, embed_tokens=self.shared)
 
@@ -153,6 +162,7 @@ class InterpolationModule(nn.Module):
     """
     def __init__(self):
         super().__init__()
+        self.swap_prob = 0
     def forward(self, parent_in, student_in, swap_prob=0.5):
         """
             Args:
