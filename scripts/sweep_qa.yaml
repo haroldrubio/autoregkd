@@ -11,7 +11,7 @@ command:
   - "--lr_scheduler_type=constant"
   - "--per_device_eval_batch_size=4"
   - "--per_device_train_batch_size=8"
-  - "--num_train_epochs=1"
+  - "--num_train_epochs=0.5"
   - "--eval_accumulation_steps=250"
   - "--save_total_limit=0"
   - "--save_steps=-1"
