@@ -1,0 +1,15 @@
+{
+    "init_mem_cpu_alloc_delta": 2581495,
+    "init_mem_cpu_peaked_delta": 30941,
+    "test_gen_len": 128.0,
+    "test_loss": 9.364028930664062,
+    "test_mem_cpu_alloc_delta": 1972126,
+    "test_mem_cpu_peaked_delta": 273559,
+    "test_rouge1": 0.0,
+    "test_rouge2": 0.0,
+    "test_rougeL": 0.0,
+    "test_rougeLsum": 0.0,
+    "test_runtime": 11.9824,
+    "test_samples": 1,
+    "test_samples_per_second": 0.083
+}

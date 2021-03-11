@@ -6,7 +6,7 @@ class DistilBartConfig(BartConfig):
     def __init__(self,
                  encoder_layer_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
                  decoder_layer_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-                 vocab_size=50265,
+                 vocab_size=50264,
                  max_position_embeddings=1024,
                  encoder_ffn_dim=4096,
                  encoder_attention_heads=16,

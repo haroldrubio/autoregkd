@@ -14,6 +14,8 @@ import numpy as np
 from filelock import FileLock
 
 import torch
+import torch.nn as nn
+
 import transformers
 from transformers import (
     BartConfig,
@@ -30,7 +32,10 @@ from transformers import (
 )
 
 from ..models.distilbart.configuration_distilbart import DistilBartConfig
-from ..models.distilbart.modeling_distilbart import DistilBart
+from ..models.distilbart.modeling_distilbart import (
+    DistilBart,
+    DistilBartForConditionalGeneration
+)
 
 from datasets import load_dataset, load_metric
 
@@ -53,12 +58,12 @@ class ModelArguments:
     )
 
     model_name: str = field(
-        default="facebook/bart-large",
+        default="facebook/bart-large-xsum",
         metadata={"help": "Name of BART model we will copy and fine-tune from (https://huggingface.co/models)"}
     )
 
     tokenizer_name: str = field(
-        default="facebook/bart-large",
+        default="facebook/bart-large-xsum",
         metadata={"help": "Name of pre-trained BART tokenizer"}
     )
 
@@ -162,6 +167,7 @@ class DatasetArguments:
 
 def main():
     print("GPUs available: {}. Number of GPUs: {}".format(torch.cuda.is_available(), torch.cuda.device_count()))
+    torch.cuda.empty_cache()
 
     parser = HfArgumentParser((ModelArguments, DatasetArguments, Seq2SeqTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
@@ -169,12 +175,18 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # Enable mixed precision training on CUDA device(s)
+    if torch.cuda.is_available() and not training_args.no_cuda:
+        training_args.fp16 = True
+        logging.info("Mixed precision training enabled.")
+
     # Set seed for replicability
     set_seed(training_args.seed)
 
     # Load dataset
     datasets = load_dataset(data_args.dataset_name)
 
+    train_dataset, eval_dataset, test_dataset = None, None, None
     if training_args.do_train:
         train_dataset = datasets['train']
     if training_args.do_eval:
@@ -200,6 +212,13 @@ def main():
     # BART tokenizer
     tokenizer = BartTokenizer.from_pretrained(model_args.tokenizer_name)
 
+    def freeze_weights(module: nn.Module):
+        """
+        Freeze the weights of a module to accelerate training
+        """
+        for param in module.parameters():
+            param.requires_grad = False
+
     if model_args.use_hf_model:
         # Load a pre-trained checkpoint for BART
         config = BartConfig()
@@ -214,8 +233,20 @@ def main():
         )
 
         # DistilBART model
-        teacher_model = BartModel.from_pretrained(model_args.model_name)
-        student_model = DistilBart(config=config, bart_model=teacher_model)
+        teacher_model = BartForConditionalGeneration.from_pretrained(model_args.model_name)
+        student_model = DistilBartForConditionalGeneration(config=config, bart_model_conditional=teacher_model)
+
+        # Freeze the encoder's parameters
+        freeze_weights(student_model.model.encoder)
+
+        # Freeze the decoder's positional and token embeddings
+        freeze_weights(student_model.model.decoder.embed_tokens)
+        freeze_weights(student_model.model.decoder.embed_positions)
+
+        encoder_trainable_params = sum(p.numel() for p in student_model.model.encoder.parameters() if p.requires_grad)
+        assert(
+            encoder_trainable_params == 0
+        ), "Expected the student's encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
 
     # Max lengths
     max_source_length = data_args.max_source_length
@@ -300,7 +331,7 @@ def main():
             tokenizer=tokenizer,
             model=student_model,
             label_pad_token_id=label_pad_token_id,
-            pad_to_multiple_of=None
+            pad_to_multiple_of=8 if training_args.fp16 else None
         )
 
     if data_args.task == "summarization":
@@ -354,20 +385,17 @@ def main():
         return result
 
     # Eval steps (should be 4 times per epoch)
-    training_args.eval_steps = round(len(train_dataset) / training_args.train_batch_size / 4.)
-
-    from transformers import TrainerCallback
-
-    class PrintCallback(TrainerCallback):
-        def on_evaluate(self, args, state, control, **kwargs):
-            print("Evaluating")
+    if training_args.do_train:
+        training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
+        training_args.logging_steps = training_args.eval_steps
+        training_args.save_steps = training_args.eval_steps
 
     # Trainer
     trainer = Seq2SeqTrainer(
         model=student_model,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        train_dataset=train_dataset if training_args.do_train else None,
+        eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None
@@ -376,7 +404,6 @@ def main():
     # Early-stopping callback
     early_stopping = EarlyStoppingCallback(early_stopping_patience=4)
     trainer.add_callback(early_stopping)
-    trainer.add_callback(PrintCallback())
 
     # Training
     if training_args.do_train:
@@ -429,6 +456,7 @@ def main():
         trainer.log_metrics("test", metrics)
         trainer.save_metrics("test", metrics)
 
+        """
         if trainer.is_world_process_zero():
             if training_args.predict_with_generate:
                 test_preds = tokenizer.batch_decode(
@@ -440,6 +468,7 @@ def main():
                 output_test_preds_file = os.path.join(training_args.output_dir, "test_generations.txt")
                 with open(output_test_preds_file, "w") as writer:
                     writer.write("\n".join(test_preds))
+        """
 
     return results
 
