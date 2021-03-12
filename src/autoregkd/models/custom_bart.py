@@ -173,8 +173,6 @@ class InterpolationModule(nn.Module):
             Args:
                 parent_in (torch.tensor): An input tensor from path 1
                 student_in (torch.tensor): An input tensor from path 2
-                swap_prob (float): The probability of an activation to swap paths
-
             Returns:
                 (parent_out, student_out) (tuple): The interpolated hidden states
         """
@@ -221,6 +219,7 @@ class InterpolationDecoder(BartDecoder):
     def __init__(self, config: DistilBartConfig, bart_decoder: BartDecoder, embed_tokens: Optional[nn.Embedding] = None):
         super().__init__(config, embed_tokens)
         # Copy structural layers and some of the transformer layers into the student
+        self.decoder_layer_indices = config.decoder_layer_indices
         self.std_layers = nn.ModuleList()
         for i in config.decoder_layer_indices:
             self.std_layers.append(copy.deepcopy(bart_decoder.layers[i]))
@@ -235,7 +234,18 @@ class InterpolationDecoder(BartDecoder):
         self.embed_tokens = copy.deepcopy(bart_decoder.embed_tokens)
         self.embed_positions = copy.deepcopy(bart_decoder.embed_positions)
         self.layernorm_embedding = copy.deepcopy(bart_decoder.layernorm_embedding)
-        
+
+        # Freeze teacher parameters
+        for l in self.layers:
+            for p in l.parameters():
+                p.requires_grad = False
+        for p in self.embed_tokens.parameters():
+            p.requires_grad = False
+        for p in self.embed_positions.parameters():
+            p.requires_grad = False
+        for p in self.layernorm_embedding.parameters():
+            p.requires_grad = False
+
         # Decoder has one interpolation module per student layer minus 1
         # Since the final outputs are not interpolated
         self.interp = nn.ModuleList([InterpolationModule(config.swap_prob) for _ in range(config.decoder_layers - 1)])
@@ -276,27 +286,39 @@ class InterpolationDecoder(BartDecoder):
         # past_key_values_length
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
 
+        # Harold: Branch off here
+        std_input_embeds = inputs_embeds
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids) * self.embed_scale
-
+            std_input_embeds = self.std_embed_tokens(input_ids) * self.embed_scale
+          
+        # Harold: No change in attention mask
         attention_mask = self._prepare_decoder_attention_mask(
             attention_mask, input_shape, inputs_embeds, past_key_values_length
         )
 
         # expand encoder attention mask
+        # Harold: No change in cross attention mask
         if encoder_hidden_states is not None and encoder_attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
             encoder_attention_mask = _expand_mask(encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1])
 
         # embed positions
+        # Harold: Branch off positions
         positions = self.embed_positions(input_shape, past_key_values_length)
+        std_positions = self.std_embed_positions(input_shape, past_key_values_length)
 
+        # Harold: Create std hidden states
         hidden_states = inputs_embeds + positions
         hidden_states = self.layernorm_embedding(hidden_states)
+        std_hidden_states = std_input_embeds + std_positions
+        std_hidden_states = self.std_layernorm_embedding(std_hidden_states)
 
         hidden_states = F.dropout(hidden_states, p=self.dropout, training=self.training)
+        std_hidden_states = F.dropout(std_hidden_states, p=self.dropout, training=self.training)
 
         # decoder layers
+        # Harold: Accumulation of decoder states remains same
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         all_cross_attentions = () if (output_attentions and encoder_hidden_states is not None) else None
@@ -307,6 +329,11 @@ class InterpolationDecoder(BartDecoder):
             assert head_mask.size()[0] == (
                 len(self.layers)
             ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
+
+        # Harold: decoder_idx counter
+        # TODO: If not training, skip teacher passes entirely and iterate over student layers
+        std_parallel = self.decoder_layer_indices[0]
+        interp_idx = 0
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
@@ -328,7 +355,21 @@ class InterpolationDecoder(BartDecoder):
                         return module(*inputs, output_attentions, use_cache)
 
                     return custom_forward
-
+                # Harold: if arrived at layer aligned pair - perform a student pass
+                std_layer_outputs = None
+                if idx == std_parallel:
+                    # Fetch student decoder layer
+                    std_decoder_layer = self.std_layers[interp_idx]
+                    std_layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(std_decoder_layer),
+                    std_hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    head_mask[idx] if head_mask is not None else None,
+                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                    None,
+                )
                 layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(decoder_layer),
                     hidden_states,
@@ -340,6 +381,23 @@ class InterpolationDecoder(BartDecoder):
                     None,
                 )
             else:
+                
+                # Harold: Same as above for non gradient checkpoint case
+                std_layer_outputs = None
+                if idx == std_parallel:
+                    # Fetch student decoder layer
+                    std_decoder_layer = self.std_layers[interp_idx]
+                    std_layer_outputs = std_decoder_layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                )
 
                 layer_outputs = decoder_layer(
                     hidden_states,
@@ -352,7 +410,22 @@ class InterpolationDecoder(BartDecoder):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                 )
+            # TODO: If not training, only std_hidden_states exist
+            if idx == std_parallel:
+                std_hidden_states = std_layer_outputs[0]
             hidden_states = layer_outputs[0]
+
+            # Harold: insert interpolation after the forward passes
+            # Check for layer alignment
+            if idx == std_parallel:
+                # Check if interpolation module exists at this pairing
+                if interp_idx < len(self.interp):
+                    # If it does, fetch the interpolation module
+                    interp_module = self.interp[interp_idx]
+                    hidden_states, std_hidden_states = interp_module(hidden_states, std_hidden_states)
+                # Step the indices
+                interp_idx += 1
+                std_parallel = self.decoder_layer_indices[interp_idx]
 
             if use_cache:
                 next_decoder_cache += (layer_outputs[3 if output_attentions else 1],)
@@ -374,8 +447,15 @@ class InterpolationDecoder(BartDecoder):
                 for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
+
+        # Harold: handle student-teacher hidden states by concatenating on hidden dimension
+        # TODO: If not training, no concatenation necessary (or maybe it is for consistency)
+        hidden_dimension = len(hidden_states.shape) - 1
+        last_hidden_states = torch.cat([hidden_states, std_hidden_states], dim=hidden_dimension)
+        
+        # Harold: handle the parsing of last hidden states downstream by cutting the states in half
         return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
+            last_hidden_state=last_hidden_states,
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
