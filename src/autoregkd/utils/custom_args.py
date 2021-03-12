@@ -4,17 +4,14 @@ import os
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Optional, Tuple
-from transformers import TrainingArguments
+from transformers import Seq2SeqTrainingArguments
 
 @dataclass
-class CustomArguments(TrainingArguments):
-    test_name: str = field(
-        default="No World",
-        metadata={
-            "help": (
-                "A simple test"
-            )
-        },
+class DistilArguments(Seq2SeqTrainingArguments):
+    model_type: str = field(
+        default="distilbart",
+        metadata={"help": "The type of model"
+                          "Supports distilbart and interbart"}
     )
 
 @dataclass
@@ -40,6 +37,13 @@ class ModelArguments:
     decoder_layer_indices: str = field(
         default='0, 2, 5',
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
+    )
+
+    swap_prob: float = field(
+        default=0.0,
+        metadata={
+            "help": "For interbart, determines the static swapping probability at training time"
+        },
     )
 
     save_final: bool = field(

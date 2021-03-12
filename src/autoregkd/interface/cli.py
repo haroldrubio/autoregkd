@@ -4,18 +4,17 @@ from transformers import (
     Seq2SeqTrainingArguments,
 )
 
-from ..utils.custom_args import ModelArguments, DatasetArguments
+from ..utils.custom_args import ModelArguments, DatasetArguments, DistilArguments
 
 def experiment(**config):
     """Train a BART model"""
     from ..training.train import training
     
-    parser = HfArgumentParser((ModelArguments, DatasetArguments, Seq2SeqTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DatasetArguments, DistilArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
     # Parse indices arguments
     # encoder_layer_indices
     if type(model_args.encoder_layer_indices) == str:
