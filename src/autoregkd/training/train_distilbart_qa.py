@@ -1,6 +1,5 @@
 """
-Training script for DistilBART
-Based on https://github.com/huggingface/transformers/blob/master/examples/seq2seq/run_seq2seq.py
+Training script to fine-tune DistilBART for the Question-Answering task
 """
 
 import sys
@@ -21,10 +20,10 @@ from transformers import (
     BartConfig,
     BartTokenizer,
     BartModel,
-    BartForConditionalGeneration,
+    BartForQuestionAnswering,
     HfArgumentParser,
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
+    Trainer,
+    TrainingArguments,
     EarlyStoppingCallback,
     DataCollatorForSeq2Seq,
     default_data_collator,
@@ -33,8 +32,8 @@ from transformers import (
 
 from ..models.distilbart.configuration_distilbart import DistilBartConfig
 from ..models.distilbart.modeling_distilbart import (
-    DistilBart,
-    DistilBartForConditionalGeneration
+    create_new_student,
+    copy_to_student
 )
 
 from datasets import load_dataset, load_metric
@@ -73,7 +72,7 @@ class ModelArguments:
     )
 
     decoder_layer_indices: Tuple = field(
-        default=(0, 6, 11),
+        default=(0, 1, 2),
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
     )
 
@@ -84,20 +83,25 @@ class DatasetArguments:
     Arguments for dataset
     """
     task: str = field(
-        default="summarization",
+        default="question-answering",
         metadata={
-            "help": "Name of the task, should be either summarization, question-answering, or dialogue-generation"}
+            "help": "Name of the task. Support only question-answering at the moment"}
     )
 
     dataset_name: str = field(
-        default="xsum",
+        default="squad",
         metadata={"help": "Name of the dataset to use (https://huggingface.co/datasets). "
-                          "Support xsum, squad, or conv_ai_2"}
+                          "Support squad and squadv2"}
+    )
+
+    use_v2: bool = field(
+        default=False,
+        metadata={"help": "Whether to use SQuADv2 or not. Default to false (use SQuADv1)"}
     )
 
     preprocessing_num_workers: Optional[int] = field(
         default=None,
-        metadata={"help": "The number of processes to use for the preprocessing."},
+        metadata={"help": "The number of processes to use for the preprocessing"},
     )
 
     overwrite_cache: bool = field(
@@ -106,21 +110,8 @@ class DatasetArguments:
     )
 
     max_source_length: Optional[int] = field(
-        default=1024,
+        default=512,
         metadata={"help": "The maximum total sequence length for source text after tokenization"},
-    )
-
-    max_target_length: Optional[int] = field(
-        default=128,
-        metadata={"help": "The maximum total sequence length for target text after tokenization"},
-    )
-
-    val_max_target_length: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "The maximum total sequence length for validation target text after tokenization. "
-                    "Default to max_target_length"
-        },
     )
 
     pad_to_max_length: bool = field(
@@ -130,14 +121,14 @@ class DatasetArguments:
 
     ignore_pad_token_for_loss: bool = field(
         default=True,
-        metadata={"help": "Whether to ignore the tokens corresponding to padded labels in the loss computation or not."},
+        metadata={"help": "Whether to ignore the tokens corresponding to padded labels in the loss computation or not"},
     )
 
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
             "help": "For debugging purposes or quicker training, truncate the number of training examples to this "
-                    "value if set."
+                    "value if set"
         },
     )
     max_val_samples: Optional[int] = field(
@@ -155,21 +146,17 @@ class DatasetArguments:
         },
     )
 
-    num_beams: Optional[int] = field(
-        default=None,
-        metadata={"help": "Number of beams used in beam search during evaluation and prediction steps "},
-    )
-
     def __post_init__(self):
-        if self.val_max_target_length is None:
-            self.val_max_target_length = self.max_target_length
+        # Update dataset name if we want to use v2 (for SQuAD)
+        if self.dataset_name == "squad" and self.use_v2:
+            self.dataset_name = "squad_v2"
 
 
 def main():
-    print("GPUs available: {}. Number of GPUs: {}".format(torch.cuda.is_available(), torch.cuda.device_count()))
+    logging.info("GPUs available: {}. Number of GPUs: {}".format(torch.cuda.is_available(), torch.cuda.device_count()))
     torch.cuda.empty_cache()
 
-    parser = HfArgumentParser((ModelArguments, DatasetArguments, Seq2SeqTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DatasetArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
@@ -193,10 +180,6 @@ def main():
         eval_dataset = datasets['validation'] if 'validation' in datasets.keys() else None
     if training_args.do_predict:
         test_dataset = datasets['test'] if 'test' in datasets.keys() else None
-
-    # Do train-test split for ConvAI2 since there's no validation split
-    if not eval_dataset:
-        pass
 
     # Get column names
     if training_args.do_train:
@@ -222,19 +205,34 @@ def main():
     if model_args.use_hf_model:
         # Load a pre-trained checkpoint for BART
         config = BartConfig()
-        student_model = BartForConditionalGeneration(config=config).from_pretrained(model_args.model_name)
+        student_model = BartForQuestionAnswering(config=config).from_pretrained(model_args.model_name).eval()
 
     else:
         # Create a DistilBart model with layers copied from the original BART model
+        # BART teacher model
+        teacher_model = BartForQuestionAnswering.from_pretrained(model_args.model_name).eval()
+
+        # Extract the teacher's configuration
+        teacher_config = teacher_model.config.to_diff_dict()
+        teacher_config.update({
+            "encoder_layers": len(list(model_args.encoder_layer_indices)),
+            "decoder_layers": len(list(model_args.decoder_layer_indices))
+        })
+
         # DistilBART configuration
-        config = DistilBartConfig(
+        student_config = DistilBartConfig(
             encoder_layer_indices=list(model_args.encoder_layer_indices),
-            decoder_layer_indices=list(model_args.decoder_layer_indices)
+            decoder_layer_indices=list(model_args.decoder_layer_indices),
+            **teacher_config
         )
 
         # DistilBART model
-        teacher_model = BartForConditionalGeneration.from_pretrained(model_args.model_name)
-        student_model = DistilBartForConditionalGeneration(config=config, bart_model_conditional=teacher_model)
+        student_model = create_new_student(teacher_model=teacher_model, config=student_config).eval()
+
+        # Copy the weights
+        copy_to_student(teacher_model=teacher_model,
+                        student_model=student_model,
+                        config=student_config)
 
         # Freeze the encoder's parameters
         freeze_weights(student_model.model.encoder)
@@ -336,11 +334,6 @@ def main():
 
     if data_args.task == "summarization":
         metric_name = "rouge"
-    elif data_args.task == "question-answering":
-        metric_name = "f1"
-    elif data_args.task == "dialogue-generation":
-        metric_name = "f1"
-        # TODO: Add perplexity
     else:
         raise ValueError("Unsupported task.")
 
@@ -362,7 +355,11 @@ def main():
         preds, labels = eval_preds
         if isinstance(preds, tuple):
             preds = preds[0]
+
+        # Decode predictions
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
+
+        # Decode labels
         if data_args.ignore_pad_token_for_loss:
             # Replace -100 in the labels as we can't decode them.
             labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
@@ -376,8 +373,7 @@ def main():
             # Extract a few results from ROUGE
             result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
         else:
-            result = metric.compute(predictions=decoded_preds, references=decoded_labels)
-            result = {"bleu": result["score"]}
+            raise ValueError("Unsupported metric.")
 
         prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
         result["gen_len"] = np.mean(prediction_lens)
@@ -391,7 +387,7 @@ def main():
         training_args.save_steps = training_args.eval_steps
 
     # Trainer
-    trainer = Seq2SeqTrainer(
+    trainer = Trainer(
         model=student_model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,

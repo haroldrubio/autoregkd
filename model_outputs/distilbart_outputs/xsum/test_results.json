@@ -1,15 +1,15 @@
 {
-    "init_mem_cpu_alloc_delta": 2581495,
-    "init_mem_cpu_peaked_delta": 30941,
-    "test_gen_len": 128.0,
-    "test_loss": 9.364028930664062,
-    "test_mem_cpu_alloc_delta": 1972126,
-    "test_mem_cpu_peaked_delta": 273559,
-    "test_rouge1": 0.0,
+    "init_mem_cpu_alloc_delta": 2584051,
+    "init_mem_cpu_peaked_delta": 30995,
+    "test_gen_len": 30.0,
+    "test_loss": 5.063687801361084,
+    "test_mem_cpu_alloc_delta": 1985465,
+    "test_mem_cpu_peaked_delta": 237185,
+    "test_rouge1": 26.087,
     "test_rouge2": 0.0,
-    "test_rougeL": 0.0,
-    "test_rougeLsum": 0.0,
-    "test_runtime": 11.9824,
+    "test_rougeL": 17.3913,
+    "test_rougeLsum": 17.3913,
+    "test_runtime": 11.605,
     "test_samples": 1,
-    "test_samples_per_second": 0.083
+    "test_samples_per_second": 0.086
 }
