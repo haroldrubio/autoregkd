@@ -11,7 +11,7 @@ class DistilArguments(Seq2SeqTrainingArguments):
     model_type: str = field(
         default="distilbart",
         metadata={"help": "The type of model"
-                          "Supports distilbart and interbart"}
+                          "Supports distilbart and interpolation"}
     )
 
 @dataclass

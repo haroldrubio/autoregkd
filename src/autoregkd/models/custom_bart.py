@@ -42,16 +42,10 @@ class DistilBartConfig(BartConfig):
         )
         self.swap_prob = swap_prob
         self.model_name = model_name
-        if model_name == 'facebook/bart-large':
-            self.encoder_layer_indices = encoder_layer_indices
-            self.decoder_layer_indices = decoder_layer_indices
-            self.encoder_layers = len(self.encoder_layer_indices)
-            self.decoder_layers = len(self.decoder_layer_indices)
-        elif model_name == 'facebook/bart-base':
-            self.encoder_layer_indices = [0, 1, 2, 3, 4, 5]
-            self.decoder_layer_indices = [0, 1, 2, 3, 4, 5]
-            self.encoder_layers = len(self.encoder_layer_indices)
-            self.decoder_layers = len(self.decoder_layer_indices)
+        self.encoder_layer_indices = encoder_layer_indices
+        self.decoder_layer_indices = decoder_layer_indices
+        self.encoder_layers = len(self.encoder_layer_indices)
+        self.decoder_layers = len(self.decoder_layer_indices)
     
     def set_distillation(self, encoder_layer_indices, decoder_layer_indices):
         self.encoder_layer_indices = encoder_layer_indices
@@ -100,7 +94,7 @@ class DistilBart(BartModel):
     def __init__(self,
                  config: DistilBartConfig,
                  bart_model: BartModel,
-                 decoder_type: str = None,
+                 decoder_type: str = 'distilbart',
                  ):
         super().__init__(config)
         self.shared = bart_model.shared
@@ -121,9 +115,10 @@ class InterpolationModule(nn.Module):
     This module contains no parameters and performs a swapping operation on the hidden unit level
     between two inputs of the same shape
     """
-    def __init__(self, swap_prob=0.5):
+    def __init__(self, swap_prob=0):
         super().__init__()
-        self.swap_prob = swap_prob
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.swap_prob = torch.tensor(swap_prob, device=self.device)
         self.register_buffer("swap_probability", self.swap_prob)
     def forward(self, parent_in, student_in):
         """
@@ -139,8 +134,8 @@ class InterpolationModule(nn.Module):
         assert common_shape == student_in.shape
 
         # Generate mask
-        rand_tensor = torch.rand(common_shape)
-        swapping_mask = torch.zeros(common_shape)
+        rand_tensor = torch.rand(common_shape, device=self.device)
+        swapping_mask = torch.zeros(common_shape, device=self.device)
         swapping_mask[rand_tensor <= swap_prob] = 1
         staying_mask = torch.abs(swapping_mask - 1)
         del rand_tensor
@@ -164,7 +159,7 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
 
     return inverted_mask.masked_fill(inverted_mask.bool(), torch.finfo(dtype).min)
 
-class InterpolationDecoder(DistilBartDecoder):
+class InterpolationDecoder(BartDecoder):
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a :class:`BartDecoderLayer`
 
@@ -174,6 +169,7 @@ class InterpolationDecoder(DistilBartDecoder):
     """
 
     def __init__(self, config: DistilBartConfig, bart_decoder: BartDecoder, embed_tokens: Optional[nn.Embedding] = None):
+        super().__init__(config=config, embed_tokens=embed_tokens)
         # Copy structural layers and some of the transformer layers into the student
         self.decoder_layer_indices = config.decoder_layer_indices
         self.std_layers = nn.ModuleList()

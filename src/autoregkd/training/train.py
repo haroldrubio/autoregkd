@@ -24,10 +24,15 @@ def training(model_args, data_args, training_args) -> None:
 
     # DistilBART configuration
     
-    config = DistilBartConfig.from_pretrained(model_args.model_name)
-    config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
+    config = DistilBartConfig(encoder_layer_indices=list(model_args.encoder_layer_indices),
+                              decoder_layer_indices=list(model_args.decoder_layer_indices),
+                              model_name=model_args.model_name,
+                              swap_prob=model_args.swap_prob).from_pretrained(model_args.model_name)
+
+    #config = DistilBartConfig().from_pretrained(model_args.model_name)
+    #config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
     bart_model = BartModel.from_pretrained(model_args.model_name)
-    distilbart_model = DistilBart(config=config, bart_model=bart_model)
+    distilbart_model = DistilBart(config=config, bart_model=bart_model, decoder_type=training_args.model_type)
     
     # Load dataset
     curr_model = None
