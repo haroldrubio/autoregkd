@@ -188,19 +188,31 @@ def main():
 
     train_dataset, eval_dataset, test_dataset = None, None, None
     if training_args.do_train:
-        train_dataset = datasets['train']
+        train_dataset = datasets["train"]
     if training_args.do_eval:
-        eval_dataset = datasets['validation'] if 'validation' in datasets.keys() else None
+        eval_dataset = datasets["validation"] if "validation" in datasets.keys() else None
     if training_args.do_predict:
-        test_dataset = datasets['test'] if 'test' in datasets.keys() else None
+        test_dataset = datasets["test"] if "test" in datasets.keys() else None
 
     # Get column names
     if training_args.do_train:
-        column_names = datasets["train"].column_names
+        if train_dataset:
+            column_names = train_dataset.column_names
+        else:
+            raise ValueError("No train dataset available. Please provide one to use --do_train.")
+            return
     elif training_args.do_eval:
-        column_names = datasets["validation"].column_names
+        if eval_dataset:
+            column_names = eval_dataset.column_names
+        else:
+            raise ValueError("No eval dataset available. Please provide one to use --do_eval.")
+            return
     elif training_args.do_predict:
-        column_names = datasets["test"].column_names
+        if test_dataset:
+            column_names = test_dataset
+        else:
+            raise ValueError("No test dataset available. Please provide one to use --do_predict.")
+            return
     else:
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
         return
@@ -289,6 +301,9 @@ def main():
         return model_inputs
 
     if training_args.do_train:
+        if not train_dataset:
+            raise ValueError("No train dataset available.")
+
         if data_args.max_train_samples is not None:
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
         train_dataset = train_dataset.map(

@@ -109,7 +109,7 @@ class DatasetArguments:
         metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
 
-    max_source_length: Optional[int] = field(
+    max_length: Optional[int] = field(
         default=512,
         metadata={"help": "The maximum total sequence length for source text after tokenization"},
     )
@@ -162,6 +162,12 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # Update output dir if necessary
+    if data_args.use_v2:
+        training_args.output_dir += "v2/"
+    else:
+        training_args.output_dir += "v1/"
+
     # Enable mixed precision training on CUDA device(s)
     if torch.cuda.is_available() and not training_args.no_cuda:
         training_args.fp16 = True
@@ -175,19 +181,31 @@ def main():
 
     train_dataset, eval_dataset, test_dataset = None, None, None
     if training_args.do_train:
-        train_dataset = datasets['train']
+        train_dataset = datasets["train"]
     if training_args.do_eval:
-        eval_dataset = datasets['validation'] if 'validation' in datasets.keys() else None
+        eval_dataset = datasets["validation"] if "validation" in datasets.keys() else None
     if training_args.do_predict:
-        test_dataset = datasets['test'] if 'test' in datasets.keys() else None
+        test_dataset = datasets["test"] if "test" in datasets.keys() else None
 
     # Get column names
     if training_args.do_train:
-        column_names = datasets["train"].column_names
+        if train_dataset:
+            column_names = train_dataset.column_names
+        else:
+            raise ValueError("No train dataset available. Please provide one to use --do_train.")
+            return
     elif training_args.do_eval:
-        column_names = datasets["validation"].column_names
+        if eval_dataset:
+            column_names = eval_dataset.column_names
+        else:
+            raise ValueError("No eval dataset available. Please provide one to use --do_eval.")
+            return
     elif training_args.do_predict:
-        column_names = datasets["test"].column_names
+        if test_dataset:
+            column_names = test_dataset
+        else:
+            raise ValueError("No test dataset available. Please provide one to use --do_predict.")
+            return
     else:
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
         return
@@ -246,9 +264,11 @@ def main():
             encoder_trainable_params == 0
         ), "Expected the student's encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
 
+        print(teacher_config)
+        return
+
     # Max lengths
-    max_source_length = data_args.max_source_length
-    max_target_length = data_args.max_target_length
+    max_length = data_args.max_length
     padding = "max_length" if data_args.pad_to_max_length else False
 
     def preprocess_xsum(examples):
@@ -261,7 +281,9 @@ def main():
         targets = examples["summary"]
 
         # Tokenize source
-        model_inputs = tokenizer(inputs, max_length=max_source_length, padding=padding, truncation=True)
+        model_inputs = tokenizer(inputs,
+                                 max_length=max_length,
+                                 padding=padding, truncation=True)
 
         # Tokenize target
         with tokenizer.as_target_tokenizer():
@@ -276,6 +298,9 @@ def main():
         return model_inputs
 
     if training_args.do_train:
+        if not train_dataset:
+            raise ValueError("No train dataset available.")
+
         if data_args.max_train_samples is not None:
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
         train_dataset = train_dataset.map(
