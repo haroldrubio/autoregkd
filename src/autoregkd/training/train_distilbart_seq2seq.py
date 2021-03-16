@@ -306,6 +306,7 @@ def main():
 
         if data_args.max_train_samples is not None:
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
+
         train_dataset = train_dataset.map(
             preprocess_xsum,
             batched=True,
@@ -323,6 +324,7 @@ def main():
 
         if data_args.max_val_samples is not None:
             eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
+
         eval_dataset = eval_dataset.map(
             preprocess_xsum,
             batched=True,
@@ -340,6 +342,7 @@ def main():
 
         if data_args.max_test_samples is not None:
             test_dataset = test_dataset.select(range(data_args.max_test_samples))
+
         test_dataset = test_dataset.map(
             preprocess_xsum,
             batched=True,

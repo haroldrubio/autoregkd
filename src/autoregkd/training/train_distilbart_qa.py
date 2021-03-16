@@ -1,5 +1,6 @@
 """
 Training script to fine-tune DistilBART for the Question-Answering task
+Based on https://colab.research.google.com/github/huggingface/notebooks/blob/master/examples/question_answering.ipynb#scrollTo=jwZn78Nfn1Sl
 """
 
 import sys
@@ -7,9 +8,11 @@ import os
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
+from collections import defaultdict, OrderedDict
 
 import nltk
 import numpy as np
+from tqdm.auto import tqdm
 from filelock import FileLock
 
 import torch
@@ -18,14 +21,12 @@ import torch.nn as nn
 import transformers
 from transformers import (
     BartConfig,
-    BartTokenizer,
-    BartModel,
+    BartTokenizerFast,
     BartForQuestionAnswering,
     HfArgumentParser,
     Trainer,
     TrainingArguments,
     EarlyStoppingCallback,
-    DataCollatorForSeq2Seq,
     default_data_collator,
     set_seed
 )
@@ -114,8 +115,13 @@ class DatasetArguments:
         metadata={"help": "The maximum total sequence length for source text after tokenization"},
     )
 
+    doc_stride: int = field(
+        default=128,
+        metadata={"help": "The authorized overlap between parts of context when splitting is necessary"}
+    )
+
     pad_to_max_length: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Whether to pad to global max length or batch max length"}
     )
 
@@ -144,6 +150,16 @@ class DatasetArguments:
             "help": "For debugging purposes or quicker training, truncate the number of test examples to this "
                     "value if set."
         },
+    )
+
+    n_best_size: Optional[int] = field(
+        default=20,
+        metadata={"help": "Number of best start/end logits allowed"}
+    )
+
+    max_answer_length: Optional[int] = field(
+        default=64,
+        metadata={"help": "Maximum answer length allowed"}
     )
 
     def __post_init__(self):
@@ -211,7 +227,8 @@ def main():
         return
 
     # BART tokenizer
-    tokenizer = BartTokenizer.from_pretrained(model_args.tokenizer_name)
+    tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
+    assert isinstance(tokenizer, transformers.PreTrainedTokenizerFast)
 
     def freeze_weights(module: nn.Module):
         """
@@ -264,38 +281,126 @@ def main():
             encoder_trainable_params == 0
         ), "Expected the student's encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
 
-        print(teacher_config)
-        return
-
     # Max lengths
     max_length = data_args.max_length
     padding = "max_length" if data_args.pad_to_max_length else False
+    pad_on_right = tokenizer.padding_side == "right"
 
-    def preprocess_xsum(examples):
+    def preprocess_squad_train(examples):
         """
-        Pre-process examples from XSum
-        :param examples:
-        :return:
+        Pre-process SQuAD examples for training
         """
-        inputs = examples["document"]
-        targets = examples["summary"]
+        questions = examples["question"]
+        contexts = examples["context"]
 
-        # Tokenize source
-        model_inputs = tokenizer(inputs,
-                                 max_length=max_length,
-                                 padding=padding, truncation=True)
+        # Tokenize questions and contexts together
+        tokenized_examples = tokenizer(
+            questions if pad_on_right else contexts,
+            contexts if pad_on_right else questions,
+            truncation="only_second" if pad_on_right else "only_first",    # Only truncate contexts
+            padding=padding,
+            max_length=max_length,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+            stride=data_args.doc_stride
+        )
 
-        # Tokenize target
-        with tokenizer.as_target_tokenizer():
-            labels = tokenizer(targets, max_length=max_target_length, padding=padding, truncation=True)
+        # Map features to their corresponding examples (when splitted)
+        sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
 
-        if padding == "max_length" and data_args.ignore_pad_token_for_loss:
-            labels["input_ids"] = [
-                [(l if l != tokenizer.pad_token_id else -100) for l in label] for label in labels["input_ids"]
+        # Map tokens to their positions in the original contexts
+        offset_mapping = tokenized_examples.pop("offset_mapping")
+
+        # Add the answer spans (start + end positions)
+        tokenized_examples["start_positions"] = []
+        tokenized_examples["end_positions"] = []
+
+        for i, offsets in enumerate(offset_mapping):
+            # Get index of CLS token
+            input_ids = tokenized_examples["input_ids"][i]
+            cls_index = input_ids.index(tokenizer.cls_token_id)
+
+            # Sequence ids (context vs. question)
+            sequence_ids = tokenized_examples.sequence_ids(i)
+
+            # Current example and answers
+            sample_index = sample_mapping[i]
+            answers = examples["answers"][sample_index]
+
+            # No answer case
+            if len(answers["answer_start"]) == 0:
+                tokenized_examples["start_positions"].append(cls_index)
+                tokenized_examples["end_positions"].append(cls_index)
+            else:
+                start_char = answers["answer_start"][0]
+                end_char = start_char + len(answers["text"][0])
+
+                # Make sure we start at the beginning of the context
+                token_start_index = 0
+                while sequence_ids[token_start_index] != (1 if pad_on_right else 0):
+                    token_start_index += 1
+
+                # Make sure we end at the end of the current span of the context
+                token_end_index = len(input_ids) - 1
+                while sequence_ids[token_end_index] != (1 if pad_on_right else 0):
+                    token_end_index -= 1
+
+                # Check for out of span
+                if not (offsets[token_start_index][0] <= start_char and offsets[token_end_index][1] >= end_char):
+                    tokenized_examples["start_positions"].append(cls_index)
+                    tokenized_examples["end_positions"].append(cls_index)
+                else:
+                    # Move the tokens until they match the start and end chars
+                    while token_start_index < len(offsets) and offsets[token_start_index][0] <= start_char:
+                        token_start_index += 1
+                    tokenized_examples["start_positions"].append(token_start_index - 1)
+                    while offsets[token_end_index][1] >= end_char:
+                        token_end_index -= 1
+                    tokenized_examples["end_positions"].append(token_end_index + 1)
+
+        return tokenized_examples
+
+    def preprocess_squad_eval(examples):
+        """
+        Preprocess validation examples. Similar to preprocess_squad_train but add features to retrieve spans of text
+
+        """
+        questions = examples["question"]
+        contexts = examples["context"]
+
+        # Tokenize questions and contexts together
+        tokenized_examples = tokenizer(
+            questions if pad_on_right else contexts,
+            contexts if pad_on_right else questions,
+            truncation="only_second" if pad_on_right else "only_first",  # Only truncate contexts
+            padding=padding,
+            max_length=max_length,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+            stride=data_args.doc_stride
+        )
+
+        # Map features to their corresponding examples (when splitted)
+        sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
+
+        # Examples' ids
+        tokenized_examples["example_id"] = []
+
+        for i in range(len(tokenized_examples["input_ids"])):
+            # Sequence ids (context vs. question)
+            sequence_ids = tokenized_examples.sequence_ids(i)
+            context_index = 1 if pad_on_right else 0
+
+            # Current example
+            sample_index = sample_mapping[i]
+            tokenized_examples["example_id"].append(examples["id"][sample_index])
+
+            tokenized_examples["offset_mapping"][i] = [
+                (o if sequence_ids[k] == context_index else None)
+                for k, o in enumerate(tokenized_examples["offset_mapping"][i])
             ]
 
-        model_inputs["labels"] = labels["input_ids"]
-        return model_inputs
+        return tokenized_examples
 
     if training_args.do_train:
         if not train_dataset:
@@ -303,8 +408,9 @@ def main():
 
         if data_args.max_train_samples is not None:
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
+
         train_dataset = train_dataset.map(
-            preprocess_xsum,
+            preprocess_squad_train,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
@@ -312,16 +418,15 @@ def main():
         )
 
     if training_args.do_eval:
-        max_target_length = data_args.val_max_target_length
-
         if not eval_dataset:
             raise ValueError("No eval dataset available.")
             return
 
         if data_args.max_val_samples is not None:
             eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
+
         eval_dataset = eval_dataset.map(
-            preprocess_xsum,
+            preprocess_squad_eval,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
@@ -329,16 +434,15 @@ def main():
         )
 
     if training_args.do_predict:
-        max_target_length = data_args.val_max_target_length
-
         if not test_dataset:
             raise ValueError("No test dataset available.")
             return
 
         if data_args.max_test_samples is not None:
             test_dataset = test_dataset.select(range(data_args.max_test_samples))
+
         test_dataset = test_dataset.map(
-            preprocess_xsum,
+            preprocess_squad_eval,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
@@ -346,66 +450,9 @@ def main():
         )
 
     # Data collator
-    label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
-    if data_args.pad_to_max_length:
-        data_collator = default_data_collator
-    else:
-        data_collator = DataCollatorForSeq2Seq(
-            tokenizer=tokenizer,
-            model=student_model,
-            label_pad_token_id=label_pad_token_id,
-            pad_to_multiple_of=8 if training_args.fp16 else None
-        )
+    data_collator = default_data_collator
 
-    if data_args.task == "summarization":
-        metric_name = "rouge"
-    else:
-        raise ValueError("Unsupported task.")
-
-    metric = load_metric(metric_name)
-
-    def postprocess_text(preds, labels):
-        if data_args.task == "summarization":
-            preds = [pred.strip() for pred in preds]
-            labels = [label.strip() for label in labels]
-
-            preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
-            labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
-        else:
-            raise ValueError("Unsupported task.")
-
-        return preds, labels
-
-    def compute_metrics(eval_preds):
-        preds, labels = eval_preds
-        if isinstance(preds, tuple):
-            preds = preds[0]
-
-        # Decode predictions
-        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-
-        # Decode labels
-        if data_args.ignore_pad_token_for_loss:
-            # Replace -100 in the labels as we can't decode them.
-            labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
-        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-
-        # Some simple post-processing
-        decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
-
-        if metric_name == "rouge":
-            result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
-            # Extract a few results from ROUGE
-            result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
-        else:
-            raise ValueError("Unsupported metric.")
-
-        prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
-        result["gen_len"] = np.mean(prediction_lens)
-        result = {k: round(v, 4) for k, v in result.items()}
-        return result
-
-    # Eval steps (should be 4 times per epoch)
+    # Eval steps (should be ~4 times per epoch)
     if training_args.do_train:
         training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
         training_args.logging_steps = training_args.eval_steps
@@ -418,8 +465,7 @@ def main():
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics if training_args.predict_with_generate else None
+        data_collator=data_collator
     )
 
     # Early-stopping callback
@@ -442,19 +488,145 @@ def main():
         trainer.save_metrics("train", metrics)
         trainer.save_state()
 
+    # Load metric to use in evaluation
+    if data_args.task == "question-answering":
+        metric_name = "squad_v2" if data_args.use_v2 else "squad"  # EM/F1 scores
+    else:
+        raise ValueError("Unsupported task.")
+
+    metric = load_metric(metric_name)
+
+    # Hyper-parameters to use during the post-preprocessing step
+    n_best_size = data_args.n_best_size
+    max_answer_length = data_args.max_answer_length
+
+    def postprocess_squad(examples, features, raw_predictions):
+        # Logging.
+        logging.info("Post-processing {} example predictions split into {} features."
+                     .format(len(examples), len(features)))
+
+        # Unpack start/end logits from the predictions
+        all_start_logits, all_end_logits, _ = raw_predictions
+
+        # Map example id to feature index
+        example_id_to_index = {
+            k: i for i, k in enumerate(examples["id"])
+        }
+        features_per_example = defaultdict(list)
+        for i, feature in enumerate(features):
+            features_per_example[example_id_to_index[feature["example_id"]]].append(i)
+
+        predictions = OrderedDict()
+
+        for example_index, example in enumerate(tqdm(examples)):
+            feature_indices = features_per_example[example_index]
+
+            min_null_score = None
+            valid_answers = []
+
+            # Context of the current example
+            context = example["context"]
+
+            for feature_index in feature_indices:
+                # Logits for the current feature
+                start_logits = all_start_logits[feature_index]
+                end_logits = all_end_logits[feature_index]
+
+                # Current offset mapping to map logits to spans of text in the context
+                offset_mapping = features[feature_index]["offset_mapping"]
+
+                # Minimum null prediction
+                cls_index = features[feature_index]["input_ids"].index(tokenizer.cls_token_id)
+                feature_null_score = start_logits[cls_index] + end_logits[cls_index]
+                if min_null_score is None or min_null_score < feature_null_score:
+                    min_null_score = feature_null_score
+
+                # Sort and keep the `n_best_size` best start/end logits
+                start_indices = np.argsort(start_logits)[-1:-n_best_size-1:-1].tolist()
+                end_indices = np.argsort(end_logits)[-1:-n_best_size-1:-1].tolist()
+
+                # Iterate through all possible combinations of start-end indices
+                for start_index in start_indices:
+                    for end_index in end_indices:
+                        # Skip if either index is out of the offset mapping's range
+                        if (
+                                start_index >= len(offset_mapping)
+                                or end_index >= len(offset_mapping)
+                                or offset_mapping[start_index] is None
+                                or offset_mapping[end_index] is None
+                        ):
+                            continue
+
+                        # Skip invalid combinations
+                        if end_index < start_index or end_index - start_index + 1 > max_answer_length:
+                            continue
+
+                        # Get the position of the start and end characters
+                        start_char = offset_mapping[start_index][0]
+                        end_char = offset_mapping[end_index][1]
+                        valid_answers.append({
+                            "score": start_logits[start_index] + end_logits[end_index],
+                            "text": context[start_char:end_char]
+                        })
+
+            # Have at least one valid answer
+            if len(valid_answers) > 0:
+                best_answer = sorted(valid_answers, key=lambda x: x["score"], reverse=True)[0]
+            else:
+                best_answer = {
+                    "score": 0.,
+                    "text": ""
+                }
+
+            # If use SQuADv2, we need to consider if the example is impossible to answer
+            if data_args.use_v2:
+                answer = best_answer["text"] if best_answer["score"] > min_null_score else ""
+                predictions[example["id"]] = answer
+
+            # SQuADv1 case
+            else:
+                predictions[example["id"]] = best_answer["text"]
+
+        # Format predictions to compute metrics
+        if data_args.use_v2:
+            formatted_predictions = [{
+                "id": k,
+                "prediction_text": v,
+                "no_answer_probability": 0.0
+            } for k, v in predictions.items()]
+        else:
+            formatted_predictions = [{
+                "id": k,
+                "prediction_text": v
+            } for k, v in predictions.items()]
+
+        # References
+        references = [{
+            "id": ex["id"],
+            "answers": ex["answers"]
+        } for ex in examples]
+
+        return metric.compute(predictions=formatted_predictions, references=references)
+
     # Evaluation
     results = {}
     if training_args.do_eval:
         logging.info("*** Evaluating ***")
 
-        metrics = trainer.evaluate(
-            max_length=max_target_length,
-            num_beams=data_args.num_beams,
-            metric_key_prefix="eval")
+        # Make predictions
+        raw_predictions = trainer.predict(eval_dataset, metric_key_prefix="eval")
+
+        # Recover the columns hidden by the trainer
+        eval_dataset.set_format(type=eval_dataset.format["type"], columns=list(eval_dataset.features.keys()))
+
+        # Postprocess to obtain final metrics
+        metrics = postprocess_squad(examples=datasets["validation"],
+                                    features=eval_dataset,
+                                    raw_predictions=raw_predictions.predictions)
 
         max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(eval_dataset)
         metrics["eval_samples"] = min(max_val_samples, len(eval_dataset))
-
+        print(metrics)
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
@@ -462,15 +634,17 @@ def main():
     if training_args.do_predict:
         logging.info("*** Testing ***")
 
-        test_results = trainer.predict(
-            test_dataset,
-            max_length=data_args.val_max_target_length,
-            num_beams=data_args.num_beams,
-            metric_key_prefix="test"
-        )
+        # Raw predictions
+        raw_predictions = trainer.predict(test_dataset, metric_key_prefix="test")
 
-        metrics = test_results.metrics
-        print(metrics)
+        # Recover the columns hidden by the trainer
+        test_dataset.set_format(type=test_dataset.format["type"], columns=list(test_dataset.features.keys()))
+
+        # Postprocess to obtain final metrics
+        metrics = postprocess_squad(examples=datasets["test"],
+                                    features=test_dataset,
+                                    raw_predictions=raw_predictions.predictions)
+
         max_test_samples = data_args.max_test_samples if data_args.max_test_samples is not None else len(test_dataset)
         metrics["test_samples"] = min(max_test_samples, len(test_dataset))
 

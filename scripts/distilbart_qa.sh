@@ -8,11 +8,10 @@ train_distilbart_qa --use_hf_model False \
                     --dataset_name squad \
                     --use_v2 False \
                     --seed 696 \
-                    --max_length 512 \
+                    --max_length 384 \
                     --per_device_train_batch_size 32 \
                     --per_device_eval_batch_size 32 \
                     --do_eval \
-                    --max_val_samples 1 \
                     --num_train_epochs 5 \
                     --evaluation_strategy steps \
                     --save_total_limit 5 \
