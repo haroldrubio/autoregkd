@@ -1,9 +1,10 @@
 import logging
 from filelock import FileLock
-
+import sys
 from transformers import (
     ElectraTokenizerFast,
     ElectraForQuestionAnswering,
+    BartConfig,
     BartTokenizer,
     BartTokenizerFast,
     BartForConditionalGeneration,
@@ -23,17 +24,19 @@ def training(model_args, data_args, training_args) -> None:
     set_seed(training_args.seed)
 
     # DistilBART configuration
-    
+    '''
+    bart_config = BartConfig.from_pretrained(model_args.model_name).to_diff_dict()
     config = DistilBartConfig(encoder_layer_indices=list(model_args.encoder_layer_indices),
                               decoder_layer_indices=list(model_args.decoder_layer_indices),
                               model_name=model_args.model_name,
-                              swap_prob=model_args.swap_prob).from_pretrained(model_args.model_name)
-
-    #config = DistilBartConfig().from_pretrained(model_args.model_name)
-    #config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
+                              swap_prob=model_args.swap_prob,
+                              decoder_type=training_args.model_type,
+                              **bart_config)
+    '''
+    config = DistilBartConfig().from_pretrained(model_args.model_name)
+    config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
     bart_model = BartModel.from_pretrained(model_args.model_name)
-    distilbart_model = DistilBart(config=config, bart_model=bart_model, decoder_type=training_args.model_type)
-    
+    distilbart_model = DistilBart(config=config, bart_model=bart_model)
     # Load dataset
     curr_model = None
     if data_args.task == 'summarization':
@@ -50,7 +53,6 @@ def training(model_args, data_args, training_args) -> None:
         raise ValueError("Unsupported task")
     
     curr_model.model = distilbart_model
-
     # Trainer
     if data_args.task == 'summarization':
         trainer = Seq2SeqTrainer(
@@ -76,9 +78,11 @@ def training(model_args, data_args, training_args) -> None:
         )
     # Training
 
+    
     if training_args.do_train:
         trainer.train(resume_from_checkpoint=None)
     if training_args.do_eval:
         trainer.evaluate(val_dataset)
     if model_args.save_final:
         trainer.save_model()
+    

@@ -35,6 +35,7 @@ class DistilBartConfig(BartConfig):
                  decoder_layer_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
                  swap_prob=0,
                  model_name = 'facebook/bart-large',
+                 decoder_type: str = 'distilbart',
                  **kwargs
                  ):
         super().__init__(
@@ -46,6 +47,7 @@ class DistilBartConfig(BartConfig):
         self.decoder_layer_indices = decoder_layer_indices
         self.encoder_layers = len(self.encoder_layer_indices)
         self.decoder_layers = len(self.decoder_layer_indices)
+        self.decoder_type = decoder_type
     
     def set_distillation(self, encoder_layer_indices, decoder_layer_indices):
         self.encoder_layer_indices = encoder_layer_indices
@@ -94,7 +96,6 @@ class DistilBart(BartModel):
     def __init__(self,
                  config: DistilBartConfig,
                  bart_model: BartModel,
-                 decoder_type: str = 'distilbart',
                  ):
         super().__init__(config)
         self.shared = bart_model.shared
@@ -105,9 +106,9 @@ class DistilBart(BartModel):
             param.requires_grad = False
 
         # Set decoder
-        if decoder_type == None:
+        if config.decoder_type == 'distilbart':
             self.decoder = DistilBartDecoder(config=config, bart_decoder=bart_model.decoder, embed_tokens=self.shared)
-        elif decoder_type == 'interpolation':
+        elif config.decoder_type == 'interpolation':
             self.decoder = InterpolationDecoder(config=config, bart_decoder=bart_model.decoder, embed_tokens=self.shared)
 
 class InterpolationModule(nn.Module):
@@ -283,168 +284,115 @@ class InterpolationDecoder(BartDecoder):
             ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
 
         # Harold: decoder_idx counter
-        # TODO: If not training, skip teacher passes entirely and iterate over student layers
-        if not self.training:
-            for idx, std_layer in enumerate(self.std_layers):
-                if output_hidden_states:
-                    all_hidden_states += (hidden_states,)
-                dropout_probability = random.uniform(0, 1)
-                if self.training and (dropout_probability < self.layerdrop):
-                    continue
+        std_parallel = self.decoder_layer_indices[0]
+        interp_idx = 0
+        for idx, decoder_layer in enumerate(self.layers):
+            # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+            if output_hidden_states and idx == std_parallel:
+                all_hidden_states += (std_hidden_states,)
+            dropout_probability = random.uniform(0, 1)
+            if self.training and (dropout_probability < self.layerdrop):
+                continue
+
+            past_key_value = past_key_values[idx] if past_key_values is not None else None
+
+            if getattr(self.config, "gradient_checkpointing", False) and self.training:
+
+                if use_cache:
+                    use_cache = False
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        # None for past_key_value
+                        return module(*inputs, output_attentions, use_cache)
+
+                    return custom_forward
+                # Harold: if arrived at layer aligned pair - perform a student pass
+                std_layer_outputs = None
+                if idx == std_parallel:
+                    # Fetch student decoder layer
+                    std_decoder_layer = self.std_layers[interp_idx]
+                    std_layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(std_decoder_layer),
+                    std_hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    head_mask[idx] if head_mask is not None else None,
+                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                    None,
+                )
+                layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(decoder_layer),
+                    hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    head_mask[idx] if head_mask is not None else None,
+                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                    None,
+                )
+            else:
+                # Harold: Same as above for non gradient checkpoint case
+                std_layer_outputs = None
+                if idx == std_parallel:
+                    # Fetch student decoder layer
+                    std_decoder_layer = self.std_layers[interp_idx]
+                    std_layer_outputs = std_decoder_layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                )
+
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                )
+            # TODO: If not training, only std_hidden_states exist
+            if idx == std_parallel:
+                std_hidden_states = std_layer_outputs[0]
+            hidden_states = layer_outputs[0]
+
+            # Harold: insert interpolation after the forward passes
+            # Check for layer alignment
+            if idx == std_parallel:
+                # Check if interpolation module exists at this pairing
+                if interp_idx < len(self.interp):
+                    # If it does, fetch the interpolation module
+                    interp_module = self.interp[interp_idx]
+                    hidden_states, std_hidden_states = interp_module(hidden_states, std_hidden_states)
+                # Step the indices
+                interp_idx += 1
+                if interp_idx < len(self.decoder_layer_indices):
+                    std_parallel = self.decoder_layer_indices[interp_idx]
                 
-                past_key_value = past_key_values[idx] if past_key_values is not None else None
-
-                if getattr(self.config, "gradient_checkpointing", False) and self.training:
-                    if use_cache:
-                        use_cache = False
-
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            # None for past_key_value
-                            return module(*inputs, output_attentions, use_cache)
-
-                        return custom_forward
-                    # Harold: if arrived at layer aligned pair - perform a student pass
-                    layer_outputs = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(std_layer),
-                        hidden_states,
-                        attention_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        head_mask[idx] if head_mask is not None else None,
-                        encoder_head_mask[idx] if encoder_head_mask is not None else None,
-                        None,
-                    )
-                else:
-                    layer_outputs = std_layer(
-                        hidden_states,
-                        attention_mask=attention_mask,
-                        encoder_hidden_states=encoder_hidden_states,
-                        encoder_attention_mask=encoder_attention_mask,
-                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                        encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
-                        past_key_value=past_key_value,
-                        output_attentions=output_attentions,
-                        use_cache=use_cache,
-                    )
-                # If not training, only std_hidden_states exist
-                hidden_states = layer_outputs[0]
+                # Maintain student history
                 if use_cache:
-                    next_decoder_cache += (layer_outputs[3 if output_attentions else 1],)
+                    next_decoder_cache += (std_layer_outputs[3 if output_attentions else 1],)
 
                 if output_attentions:
-                    all_self_attns += (layer_outputs[1],)
+                    all_self_attns += (std_layer_outputs[1],)
 
                     if encoder_hidden_states is not None:
-                        all_cross_attentions += (layer_outputs[2],)
-        else:
-            std_parallel = self.decoder_layer_indices[0]
-            interp_idx = 0
-            for idx, decoder_layer in enumerate(self.layers):
-                # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
-                if output_hidden_states:
-                    all_hidden_states += (hidden_states,)
-                dropout_probability = random.uniform(0, 1)
-                if self.training and (dropout_probability < self.layerdrop):
-                    continue
+                        all_cross_attentions += (std_layer_outputs[2],)
 
-                past_key_value = past_key_values[idx] if past_key_values is not None else None
-
-                if getattr(self.config, "gradient_checkpointing", False) and self.training:
-
-                    if use_cache:
-                        use_cache = False
-
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            # None for past_key_value
-                            return module(*inputs, output_attentions, use_cache)
-
-                        return custom_forward
-                    # Harold: if arrived at layer aligned pair - perform a student pass
-                    std_layer_outputs = None
-                    if idx == std_parallel:
-                        # Fetch student decoder layer
-                        std_decoder_layer = self.std_layers[interp_idx]
-                        std_layer_outputs = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(std_decoder_layer),
-                        std_hidden_states,
-                        attention_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        head_mask[idx] if head_mask is not None else None,
-                        encoder_head_mask[idx] if encoder_head_mask is not None else None,
-                        None,
-                    )
-                    layer_outputs = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(decoder_layer),
-                        hidden_states,
-                        attention_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        head_mask[idx] if head_mask is not None else None,
-                        encoder_head_mask[idx] if encoder_head_mask is not None else None,
-                        None,
-                    )
-                else:
-                    # Harold: Same as above for non gradient checkpoint case
-                    std_layer_outputs = None
-                    if idx == std_parallel:
-                        # Fetch student decoder layer
-                        std_decoder_layer = self.std_layers[interp_idx]
-                        std_layer_outputs = std_decoder_layer(
-                        hidden_states,
-                        attention_mask=attention_mask,
-                        encoder_hidden_states=encoder_hidden_states,
-                        encoder_attention_mask=encoder_attention_mask,
-                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                        encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
-                        past_key_value=past_key_value,
-                        output_attentions=output_attentions,
-                        use_cache=use_cache,
-                    )
-
-                    layer_outputs = decoder_layer(
-                        hidden_states,
-                        attention_mask=attention_mask,
-                        encoder_hidden_states=encoder_hidden_states,
-                        encoder_attention_mask=encoder_attention_mask,
-                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                        encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
-                        past_key_value=past_key_value,
-                        output_attentions=output_attentions,
-                        use_cache=use_cache,
-                    )
-                # TODO: If not training, only std_hidden_states exist
-                if idx == std_parallel:
-                    std_hidden_states = std_layer_outputs[0]
-                hidden_states = layer_outputs[0]
-
-                # Harold: insert interpolation after the forward passes
-                # Check for layer alignment
-                if idx == std_parallel:
-                    # Check if interpolation module exists at this pairing
-                    if interp_idx < len(self.interp):
-                        # If it does, fetch the interpolation module
-                        interp_module = self.interp[interp_idx]
-                        hidden_states, std_hidden_states = interp_module(hidden_states, std_hidden_states)
-                    # Step the indices
-                    interp_idx += 1
-                    if interp_idx < len(self.decoder_layer_indices):
-                        std_parallel = self.decoder_layer_indices[interp_idx]
-
-                if use_cache:
-                    next_decoder_cache += (layer_outputs[3 if output_attentions else 1],)
-
-                if output_attentions:
-                    all_self_attns += (layer_outputs[1],)
-
-                    if encoder_hidden_states is not None:
-                        all_cross_attentions += (layer_outputs[2],)
-
+        # Harold: only add if last layers are aligned
         # add hidden states from the last decoder layer
-        if output_hidden_states:
-            all_hidden_states += (hidden_states,)
+        if output_hidden_states and idx == std_parallel:
+            all_hidden_states += (std_hidden_states,)
 
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
@@ -453,9 +401,6 @@ class InterpolationDecoder(BartDecoder):
                 for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
-        # Harold: check for training, if not training then set std hidden states
-        if not self.training:
-            std_hidden_states = hidden_states
         # Harold: handle the parsing of last hidden states downstream by cutting the states in half
         return DistilModelOutputWithPastAndCrossAttentions(
             last_hidden_state=std_hidden_states,

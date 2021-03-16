@@ -4,6 +4,7 @@
   "output_dir": "test_distilbart_squad_v2_2",
   "model_name": "facebook/bart-large",
   "model_type": "interpolation",
+  "swap_prob": 1,
   "encoder_layer_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
   "decoder_layer_indices": [0, 6, 11],
   "per_device_eval_batch_size": 4,
