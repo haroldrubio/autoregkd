@@ -27,7 +27,7 @@ from typing import Optional
 from datasets import load_dataset, load_metric
 
 import transformers
-from .trainer_qa import QuestionAnsweringTrainer
+from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
@@ -41,7 +41,7 @@ from transformers import (
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
-from .utils_qa import postprocess_qa_predictions
+from utils_qa import postprocess_qa_predictions
 
 logger = logging.getLogger(__name__)
 
