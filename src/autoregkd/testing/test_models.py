@@ -66,6 +66,7 @@ class TestDecoder(unittest.TestCase):
         self.distil_decoder = DistilBartDecoder(config, bart_model.decoder, bart_model.shared)
         self.inter_decoder = InterpolationDecoder(config, bart_model.decoder, bart_model.shared)
 
+        # TODO: Get input sizes of arguments
         batch_size = 16
         seq_len = 384
         d_hid = 512
