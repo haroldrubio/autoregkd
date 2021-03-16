@@ -27,7 +27,7 @@ from typing import Optional
 from datasets import load_dataset, load_metric
 
 import transformers
-from trainer_qa import QuestionAnsweringTrainer
+from .trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
@@ -41,12 +41,7 @@ from transformers import (
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
-from transformers.utils import check_min_version
-from utils_qa import postprocess_qa_predictions
-
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.5.0.dev0")
+from .utils_qa import postprocess_qa_predictions
 
 logger = logging.getLogger(__name__)
 
@@ -520,28 +515,7 @@ def main():
         else:
             checkpoint = None
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the tokenizer too for easy upload
-
-        metrics = train_result.metrics
-        max_train_samples = (
-            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-        )
-        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
-
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
-
-    # Evaluation
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
-        metrics = trainer.evaluate()
-
-        max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(eval_dataset)
-        metrics["eval_samples"] = min(max_val_samples, len(eval_dataset))
-
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+    # Harold: Remove evaluation calls as they are incompatible with the current release version
 
 
 def _mp_fn(index):
