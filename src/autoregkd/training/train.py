@@ -2,6 +2,7 @@ import logging
 from filelock import FileLock
 import sys
 from transformers import (
+    AutoConfig,
     ElectraTokenizerFast,
     ElectraForQuestionAnswering,
     BartConfig,
@@ -46,9 +47,12 @@ def training(model_args, data_args, training_args) -> None:
         curr_model = BartForConditionalGeneration.from_pretrained(model_args.model_name)
         tokenizer = BartTokenizer.from_pretrained(model_args.tokenizer_name)
     elif data_args.task == 'question-answering':
+        config = AutoConfig.from_pretrained(
+            model_args.model_name,
+        )
         data_accessor = QA_Dataset(training_args, model_args, data_args)
         train_dataset, val_dataset, data_collator = data_accessor.access_datasets()
-        curr_model = BartForQuestionAnswering.from_pretrained(model_args.model_name)
+        curr_model = BartForQuestionAnswering.from_pretrained(model_args.model_name, config=config)
         tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
     else:
         raise ValueError("Unsupported task")
