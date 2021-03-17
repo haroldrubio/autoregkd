@@ -20,22 +20,22 @@ class ModelArguments:
     Arguments for model
     """
     model_name: str = field(
-        default="facebook/bart-base",
+        default="facebook/bart-large",
         metadata={"help": "Name of BART model we will copy and fine-tune from (https://huggingface.co/models)"}
     )
 
     tokenizer_name: str = field(
-        default="facebook/bart-base",
+        default="facebook/bart-large",
         metadata={"help": "Name of pre-trained BART tokenizer"}
     )
 
     encoder_layer_indices: str = field(
-        default='0,1,2,3,4,5',
+        default='0,1,2,3,4,5,6,7,8,9,10,11',
         metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
     )
 
     decoder_layer_indices: str = field(
-        default='0, 2, 5',
+        default='0,6,11',
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
     )
 
