@@ -27,7 +27,7 @@ from typing import Optional
 from datasets import load_dataset, load_metric
 
 import transformers
-from ..src.autoregkd.models.custom_bart import (
+from ..autoregkd.models.custom_bart import (
     DistilBart,
     DistilBartConfig,
 )
