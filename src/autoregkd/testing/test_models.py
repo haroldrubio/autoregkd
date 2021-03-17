@@ -57,6 +57,7 @@ class TestInterpolation(unittest.TestCase):
         
 class TestDecoder(unittest.TestCase):
     def setUp(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model_name = 'facebook/bart-large'
         encoder_layer_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         decoder_layer_indices = [0, 6, 11]
@@ -65,28 +66,68 @@ class TestDecoder(unittest.TestCase):
         bart_model = BartModel.from_pretrained(model_name)
         self.distil_decoder = DistilBartDecoder(config, bart_model.decoder, bart_model.shared)
         self.inter_decoder = InterpolationDecoder(config, bart_model.decoder, bart_model.shared)
+        self.distil_decoder.to(self.device)
+        self.inter_decoder.to(self.device)
 
-        # TODO: Get input sizes of arguments
         batch_size = 16
         seq_len = 384
-        d_hid = 512
-        self.decoder_input_ids = torch.randint(0, 10, (batch_size, seq_len))
-        self.decoder_attention_mask = torch.ones((batch_size, seq_len))
-        self.encoder_hidden_state = torch.rand((batch_size, seq_len, d_hid))
-        self.encoder_attention_mask = torch.ones((batch_size, seq_len))
+        d_hid = 1024
+        self.decoder_input_ids = torch.randint(0, 10, (batch_size, seq_len), device=self.device)
+        self.encoder_hidden_state = torch.rand((batch_size, seq_len, d_hid), device=self.device)
+        self.encoder_attention_mask = torch.ones((batch_size, seq_len), device=self.device)
         self.output_attentions = True
         self.output_hidden_states = True
 
-    def test_forward(self):
-        output = self.inter_decoder(
+        self.distil = self.distil_decoder(
             input_ids=self.decoder_input_ids,
-            attention_mask=self.decoder_attention_mask,
             encoder_hidden_states=self.encoder_hidden_state,
             encoder_attention_mask=self.encoder_attention_mask,
             output_attentions=self.output_attentions,
             output_hidden_states=self.output_hidden_states,
         )
-        print(output.shape)
+        self.inter = self.inter_decoder(
+            input_ids=self.decoder_input_ids,
+            encoder_hidden_states=self.encoder_hidden_state,
+            encoder_attention_mask=self.encoder_attention_mask,
+            output_attentions=self.output_attentions,
+            output_hidden_states=self.output_hidden_states,
+        )
+
+    def test_num_states(self):
+        self.assertEqual(len(self.inter.hidden_states), len(self.distil.hidden_states))
+        self.assertEqual(len(self.inter.cross_attentions), len(self.distil.cross_attentions))
+
+    def test_shapes(self):
+        self.assertEqual(tuple(self.inter.last_hidden_state.shape),
+                         tuple(self.distil.last_hidden_state.shape))
+        for hi, hd in zip(self.inter.hidden_states, self.distil.hidden_states):
+            si = tuple(hi.shape)
+            sd = tuple(hd.shape)
+            self.assertEqual(si, sd)
+        for ai, ad in zip(self.inter.cross_attentions, self.distil.cross_attentions):
+            si = tuple(ai.shape)
+            sd = tuple(ad.shape)
+            self.assertEqual(si, sd)
+
+    def test_distinct_norms(self):
+        self.assertNotEqual(torch.norm(self.inter.last_hidden_state),
+                            torch.norm(self.inter.teacher_hidden_state))
+
+    def test_norms(self):
+        self.assertAlmostEqual(float(torch.norm(self.inter.last_hidden_state)),
+                         float(torch.norm(self.distil.last_hidden_state)), places=-2)
+        for hi, hd in zip(self.inter.hidden_states, self.distil.hidden_states):
+            self.assertAlmostEqual(float(torch.norm(hi)),
+                             float(torch.norm(hd)), places=-2)
+        for ai, ad in zip(self.inter.cross_attentions, self.distil.cross_attentions):
+            self.assertAlmostEqual(float(torch.norm(ai)),
+                             float(torch.norm(ad)),places=-2)
+    
+    def test_print_norms(self):
+        print(f'inter_std {torch.norm(self.inter.last_hidden_state)}')
+        print(f'inter_tch {torch.norm(self.inter.teacher_hidden_state)}')
+        print(f'distil {torch.norm(self.distil.last_hidden_state)}')
+
 
 def run_tests():
     print('running_tests')

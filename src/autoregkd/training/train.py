@@ -35,6 +35,7 @@ def training(model_args, data_args, training_args) -> None:
     '''
     config = DistilBartConfig().from_pretrained(model_args.model_name)
     config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
+    config.decoder_type = training_args.model_type
     bart_model = BartModel.from_pretrained(model_args.model_name)
     distilbart_model = DistilBart(config=config, bart_model=bart_model)
     # Load dataset
