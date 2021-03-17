@@ -71,6 +71,7 @@ class QA_Dataset():
         self.metric = load_metric("squad_v2" if data_args.version_2_with_negative else "squad")
     
     def access_datasets(self):
+        # TODO: perform mapping on dataset, not actual selfdataset
         train_dataset = self.train_dataset
         if self.data_args.max_train_samples is not None:
                 train_dataset = train_dataset.select(range(self.data_args.max_train_samples))

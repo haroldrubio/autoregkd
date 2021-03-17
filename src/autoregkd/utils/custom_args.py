@@ -90,7 +90,7 @@ class DatasetArguments:
     )
 
     pad_to_max_length: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Whether to pad to global max length or batch max length"}
     )
 

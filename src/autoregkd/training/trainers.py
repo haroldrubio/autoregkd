@@ -4,7 +4,6 @@
 A subclass of `Trainer` specific to Question-Answering tasks
 """
 import time, collections, torch
-
 import sys
 from transformers import Trainer, is_datasets_available
 from transformers import Seq2SeqTrainer as SeqTrainer
@@ -51,6 +50,7 @@ class QuestionAnsweringTrainer(Trainer):
             eval_dataset.set_format(type=eval_dataset.format["type"], columns=list(eval_dataset.features.keys()))
 
         if self.post_process_function is not None and self.compute_metrics is not None:
+            # TODO: Harold - replace conditional with unconditional parsing
             # Harold: Parse logits(?)
             start_logits, end_logits, _ = output.predictions
             logits = (start_logits, end_logits)
