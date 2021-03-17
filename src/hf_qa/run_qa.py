@@ -302,10 +302,10 @@ def main():
         model_args.encoder_layer_indices = e_indices
         model_args.decoder_layer_indices = d_indices
 
-    config = DistilBartConfig().from_pretrained(model_args.model_name)
+    config = DistilBartConfig().from_pretrained(model_args.model_name_or_path)
     config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
     config.decoder_type = training_args.model_type
-    bart_model = BartModel.from_pretrained(model_args.model_name)
+    bart_model = BartModel.from_pretrained(model_args.model_name_or_path)
     distilbart_model = DistilBart(config=config, bart_model=bart_model)
     model.model = distilbart_model
 
