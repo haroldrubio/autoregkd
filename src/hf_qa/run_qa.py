@@ -27,11 +27,16 @@ from typing import Optional
 from datasets import load_dataset, load_metric
 
 import transformers
+from src.autoregkd.models.custom_bart import (
+    DistilBart,
+    DistilBartConfig,
+)
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
     AutoTokenizer,
+    BartModel,
     DataCollatorWithPadding,
     EvalPrediction,
     HfArgumentParser,
@@ -77,6 +82,15 @@ class ModelArguments:
             "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
             "with private models)."
         },
+    )
+    encoder_layer_indices: str = field(
+        default='0,1,2,3,4,5,6,7,8,9,10,11',
+        metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
+    )
+
+    decoder_layer_indices: str = field(
+        default='0,6,11',
+        metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
     )
 
 
@@ -275,6 +289,25 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
+
+    # Harold: Overwrite the above assignments to support DistilBART
+    # Parse indices
+    if type(model_args.encoder_layer_indices) == str:
+        e_indices = model_args.encoder_layer_indices.split(',')
+        d_indices = model_args.decoder_layer_indices.split(',')
+
+        e_indices = [int(ele) for ele in e_indices]
+        d_indices = [int(ele) for ele in d_indices]
+
+        model_args.encoder_layer_indices = e_indices
+        model_args.decoder_layer_indices = d_indices
+
+    config = DistilBartConfig().from_pretrained(model_args.model_name)
+    config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
+    config.decoder_type = training_args.model_type
+    bart_model = BartModel.from_pretrained(model_args.model_name)
+    distilbart_model = DistilBart(config=config, bart_model=bart_model)
+    model.model = distilbart_model
 
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):

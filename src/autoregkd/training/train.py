@@ -57,8 +57,8 @@ def training(model_args, data_args, training_args) -> None:
     else:
         raise ValueError("Unsupported task")
     
-    # TODO: DEBUG - disable distilled model
-    # curr_model.model = distilbart_model
+    # DEBUG - disable distilled model
+    curr_model.model = distilbart_model
 
     # Trainer
     if data_args.task == 'summarization':

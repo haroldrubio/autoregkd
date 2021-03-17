@@ -1,4 +1,4 @@
-from os import read
+import sys
 import torch
 import nltk
 from filelock import FileLock
