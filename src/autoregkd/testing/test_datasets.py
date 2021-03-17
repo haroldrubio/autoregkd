@@ -43,3 +43,10 @@ class TestDatasets(unittest.TestCase):
             for k in keys:
                 self.assertEqual(hf[k], ha[k])
             
+    def test_valid(self):
+        self.assertEqual(len(self.hf_val), len(self.ha_val))
+        for hf, ha in zip(self.hf_val, self.ha_val):
+            self.assertEqual(hf.keys(), ha.keys())
+            keys = hf.keys()
+            for k in keys:
+                self.assertEqual(hf[k], ha[k])

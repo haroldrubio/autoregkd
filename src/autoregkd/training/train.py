@@ -53,7 +53,9 @@ def training(model_args, data_args, training_args) -> None:
     else:
         raise ValueError("Unsupported task")
     
-    curr_model.model = distilbart_model
+    # TODO: DEBUG - disable distilled model
+    # curr_model.model = distilbart_model
+
     # Trainer
     if data_args.task == 'summarization':
         trainer = Seq2SeqTrainer(
