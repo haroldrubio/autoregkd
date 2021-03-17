@@ -71,6 +71,11 @@ class DistilBartEncoder(BartEncoder):
             self.layers.append(copy.deepcopy(bart_encoder.layers[i]))
         self.embed_tokens = copy.deepcopy(bart_encoder.embed_tokens)
         self.embed_positions = copy.deepcopy(bart_encoder.embed_positions)
+        # Freeze embeddings
+        for param in self.embed_tokens.parameters():
+            param.requires_grad = False
+        for param in self.embed_positions.parameters():
+            param.requires_grad = False
         self.layernorm_embedding = copy.deepcopy(bart_encoder.layernorm_embedding)
 
 class DistilBartDecoder(BartDecoder):
@@ -88,6 +93,11 @@ class DistilBartDecoder(BartDecoder):
             self.layers.append(copy.deepcopy(bart_decoder.layers[i]))
         self.embed_tokens = copy.deepcopy(bart_decoder.embed_tokens)
         self.embed_positions = copy.deepcopy(bart_decoder.embed_positions)
+        # Freeze embeddings
+        for param in self.embed_tokens.parameters():
+            param.requires_grad = False
+        for param in self.embed_positions.parameters():
+            param.requires_grad = False
         self.layernorm_embedding = copy.deepcopy(bart_decoder.layernorm_embedding)
 
 
