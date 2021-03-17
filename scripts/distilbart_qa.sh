@@ -9,9 +9,14 @@ train_distilbart_qa --use_hf_model False \
                     --use_v2 False \
                     --seed 696 \
                     --max_length 384 \
+                    --doc_stride 128 \
+                    --n_best_size 20 \
+                    --max_answer_length 30 \
+                    --null_score_diff_threshold 0.0 \
                     --per_device_train_batch_size 32 \
                     --per_device_eval_batch_size 32 \
                     --do_eval \
+                    --max_val_samples 1 \
                     --num_train_epochs 5 \
                     --evaluation_strategy steps \
                     --save_total_limit 5 \

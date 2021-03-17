@@ -24,13 +24,16 @@ from transformers import (
     BartTokenizerFast,
     BartForQuestionAnswering,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
     EarlyStoppingCallback,
     default_data_collator,
+    DataCollatorWithPadding,
+    EvalPrediction,
     set_seed
 )
 
+from .trainer_qa import QuestionAnsweringTrainer
+from .utils_qa import postprocess_qa_predictions
 from ..models.distilbart.configuration_distilbart import DistilBartConfig
 from ..models.distilbart.modeling_distilbart import (
     create_new_student,
@@ -111,7 +114,7 @@ class DatasetArguments:
     )
 
     max_length: Optional[int] = field(
-        default=512,
+        default=384,
         metadata={"help": "The maximum total sequence length for source text after tokenization"},
     )
 
@@ -158,8 +161,17 @@ class DatasetArguments:
     )
 
     max_answer_length: Optional[int] = field(
-        default=64,
+        default=30,
         metadata={"help": "Maximum answer length allowed"}
+    )
+
+    null_score_diff_threshold: float = field(
+        default=0.0,
+        metadata={
+            "help": "The threshold used to select the null answer: if the best answer has a score that is less than "
+                    "the score of the null answer minus this threshold, the null answer is selected for this example. "
+                    "Only useful when `use_v2=True`."
+        }
     )
 
     def __post_init__(self):
@@ -187,6 +199,7 @@ def main():
     # Enable mixed precision training on CUDA device(s)
     if torch.cuda.is_available() and not training_args.no_cuda:
         training_args.fp16 = True
+        training_args.fp16_opt_level = "O1"
         logging.info("Mixed precision training enabled.")
 
     # Set seed for replicability
@@ -360,6 +373,21 @@ def main():
 
         return tokenized_examples
 
+    if training_args.do_train:
+        if not train_dataset:
+            raise ValueError("No train dataset available.")
+
+        if data_args.max_train_samples is not None:
+            train_dataset = train_dataset.select(range(data_args.max_train_samples))
+
+        train_dataset = train_dataset.map(
+            preprocess_squad_train,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache
+        )
+
     def preprocess_squad_eval(examples):
         """
         Preprocess validation examples. Similar to preprocess_squad_train but add features to retrieve spans of text
@@ -402,21 +430,6 @@ def main():
 
         return tokenized_examples
 
-    if training_args.do_train:
-        if not train_dataset:
-            raise ValueError("No train dataset available.")
-
-        if data_args.max_train_samples is not None:
-            train_dataset = train_dataset.select(range(data_args.max_train_samples))
-
-        train_dataset = train_dataset.map(
-            preprocess_squad_train,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache
-        )
-
     if training_args.do_eval:
         if not eval_dataset:
             raise ValueError("No eval dataset available.")
@@ -450,7 +463,54 @@ def main():
         )
 
     # Data collator
-    data_collator = default_data_collator
+    if data_args.pad_to_max_length:
+        data_collator = default_data_collator
+    else:
+        data_collator = DataCollatorWithPadding(
+            tokenizer=tokenizer,
+            pad_to_multiple_of=8 if training_args.fp16 else None
+        )
+
+    # Load metric to use in evaluation
+    if data_args.task == "question-answering":
+        metric_name = "squad_v2" if data_args.use_v2 else "squad"  # EM/F1 scores
+    else:
+        raise ValueError("Unsupported task.")
+
+    metric = load_metric(metric_name)
+
+    def postprocess_squad(examples, features, predictions):
+        print(examples, features)
+        predictions = postprocess_qa_predictions(
+            examples=examples,
+            features=features,
+            predictions=predictions,
+            version_2_with_negative=data_args.use_v2,
+            n_best_size=data_args.n_best_size,
+            max_answer_length=data_args.max_answer_length,
+            null_score_diff_threshold=data_args.null_score_diff_threshold,
+            output_dir=training_args.output_dir,
+            is_world_process_zero=trainer.is_world_process_zero()
+        )
+
+        # Format the predictions
+        if data_args.use_v2:
+            formatted_predictions = [
+                {"id": k, "prediction_text": v, "no_answer_probability": 0.0} for k, v in predictions.items()
+            ]
+        else:
+            formatted_predictions = [
+                {"id": k, "prediction_text": v} for k, v in predictions.items()
+            ]
+
+        references = [
+            {"id": ex["id"], "answers": ex["answers"]} for ex in datasets["validation"]
+        ]
+
+        return EvalPrediction(predictions=formatted_predictions, label_ids=references)
+
+    def compute_metrics(eval_preds):
+        return metric.compute(predictions=eval_preds.predictions, references=eval_preds.label_ids)
 
     # Eval steps (should be ~4 times per epoch)
     if training_args.do_train:
@@ -459,13 +519,16 @@ def main():
         training_args.save_steps = training_args.eval_steps
 
     # Trainer
-    trainer = Trainer(
+    trainer = QuestionAnsweringTrainer(
         model=student_model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
+        eval_examples=datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
-        data_collator=data_collator
+        data_collator=data_collator,
+        post_process_function=postprocess_squad,
+        compute_metrics=compute_metrics
     )
 
     # Early-stopping callback
@@ -488,144 +551,17 @@ def main():
         trainer.save_metrics("train", metrics)
         trainer.save_state()
 
-    # Load metric to use in evaluation
-    if data_args.task == "question-answering":
-        metric_name = "squad_v2" if data_args.use_v2 else "squad"  # EM/F1 scores
-    else:
-        raise ValueError("Unsupported task.")
-
-    metric = load_metric(metric_name)
-
-    # Hyper-parameters to use during the post-preprocessing step
-    n_best_size = data_args.n_best_size
-    max_answer_length = data_args.max_answer_length
-
-    def postprocess_squad(examples, features, raw_predictions):
-        # Logging.
-        logging.info("Post-processing {} example predictions split into {} features."
-                     .format(len(examples), len(features)))
-
-        # Unpack start/end logits from the predictions
-        all_start_logits, all_end_logits, _ = raw_predictions
-
-        # Map example id to feature index
-        example_id_to_index = {
-            k: i for i, k in enumerate(examples["id"])
-        }
-        features_per_example = defaultdict(list)
-        for i, feature in enumerate(features):
-            features_per_example[example_id_to_index[feature["example_id"]]].append(i)
-
-        predictions = OrderedDict()
-
-        for example_index, example in enumerate(tqdm(examples)):
-            feature_indices = features_per_example[example_index]
-
-            min_null_score = None
-            valid_answers = []
-
-            # Context of the current example
-            context = example["context"]
-
-            for feature_index in feature_indices:
-                # Logits for the current feature
-                start_logits = all_start_logits[feature_index]
-                end_logits = all_end_logits[feature_index]
-
-                # Current offset mapping to map logits to spans of text in the context
-                offset_mapping = features[feature_index]["offset_mapping"]
-
-                # Minimum null prediction
-                cls_index = features[feature_index]["input_ids"].index(tokenizer.cls_token_id)
-                feature_null_score = start_logits[cls_index] + end_logits[cls_index]
-                if min_null_score is None or min_null_score < feature_null_score:
-                    min_null_score = feature_null_score
-
-                # Sort and keep the `n_best_size` best start/end logits
-                start_indices = np.argsort(start_logits)[-1:-n_best_size-1:-1].tolist()
-                end_indices = np.argsort(end_logits)[-1:-n_best_size-1:-1].tolist()
-
-                # Iterate through all possible combinations of start-end indices
-                for start_index in start_indices:
-                    for end_index in end_indices:
-                        # Skip if either index is out of the offset mapping's range
-                        if (
-                                start_index >= len(offset_mapping)
-                                or end_index >= len(offset_mapping)
-                                or offset_mapping[start_index] is None
-                                or offset_mapping[end_index] is None
-                        ):
-                            continue
-
-                        # Skip invalid combinations
-                        if end_index < start_index or end_index - start_index + 1 > max_answer_length:
-                            continue
-
-                        # Get the position of the start and end characters
-                        start_char = offset_mapping[start_index][0]
-                        end_char = offset_mapping[end_index][1]
-                        valid_answers.append({
-                            "score": start_logits[start_index] + end_logits[end_index],
-                            "text": context[start_char:end_char]
-                        })
-
-            # Have at least one valid answer
-            if len(valid_answers) > 0:
-                best_answer = sorted(valid_answers, key=lambda x: x["score"], reverse=True)[0]
-            else:
-                best_answer = {
-                    "score": 0.,
-                    "text": ""
-                }
-
-            # If use SQuADv2, we need to consider if the example is impossible to answer
-            if data_args.use_v2:
-                answer = best_answer["text"] if best_answer["score"] > min_null_score else ""
-                predictions[example["id"]] = answer
-
-            # SQuADv1 case
-            else:
-                predictions[example["id"]] = best_answer["text"]
-
-        # Format predictions to compute metrics
-        if data_args.use_v2:
-            formatted_predictions = [{
-                "id": k,
-                "prediction_text": v,
-                "no_answer_probability": 0.0
-            } for k, v in predictions.items()]
-        else:
-            formatted_predictions = [{
-                "id": k,
-                "prediction_text": v
-            } for k, v in predictions.items()]
-
-        # References
-        references = [{
-            "id": ex["id"],
-            "answers": ex["answers"]
-        } for ex in examples]
-
-        return metric.compute(predictions=formatted_predictions, references=references)
-
     # Evaluation
     results = {}
     if training_args.do_eval:
         logging.info("*** Evaluating ***")
 
-        # Make predictions
-        raw_predictions = trainer.predict(eval_dataset, metric_key_prefix="eval")
-
-        # Recover the columns hidden by the trainer
-        eval_dataset.set_format(type=eval_dataset.format["type"], columns=list(eval_dataset.features.keys()))
-
-        # Postprocess to obtain final metrics
-        metrics = postprocess_squad(examples=datasets["validation"],
-                                    features=eval_dataset,
-                                    raw_predictions=raw_predictions.predictions)
+        # Make predictions and metrics
+        metrics = trainer.evaluate()
 
         max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(eval_dataset)
         metrics["eval_samples"] = min(max_val_samples, len(eval_dataset))
+
         print(metrics)
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
@@ -635,15 +571,8 @@ def main():
         logging.info("*** Testing ***")
 
         # Raw predictions
-        raw_predictions = trainer.predict(test_dataset, metric_key_prefix="test")
-
-        # Recover the columns hidden by the trainer
-        test_dataset.set_format(type=test_dataset.format["type"], columns=list(test_dataset.features.keys()))
-
-        # Postprocess to obtain final metrics
-        metrics = postprocess_squad(examples=datasets["test"],
-                                    features=test_dataset,
-                                    raw_predictions=raw_predictions.predictions)
+        test_results = trainer.predict(test_dataset, metric_key_prefix="test")
+        metrics = test_results.metrics
 
         max_test_samples = data_args.max_test_samples if data_args.max_test_samples is not None else len(test_dataset)
         metrics["test_samples"] = min(max_test_samples, len(test_dataset))
