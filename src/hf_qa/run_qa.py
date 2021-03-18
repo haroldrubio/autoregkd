@@ -305,8 +305,7 @@ def main():
     # Harold: Overwrite the above assignments to support DistilBART
     model, _, _ = create_qa_student_by_copying_alternating_layers(
         teacher=model_args.model_name_or_path,
-        d=model_args.num_decoder_layers,
-        **config
+        d=model_args.num_decoder_layers
     )
     freeze_embeds(model)
     freeze_params(model.get_encoder())
