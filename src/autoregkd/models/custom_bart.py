@@ -158,8 +158,8 @@ class InterpolationModule(nn.Module):
         del rand_tensor
 
         # Create two output tensors
-        parent_out = staying_mask * parent_in# + swapping_mask * student_in
-        student_out = staying_mask * student_in# + swapping_mask * parent_in
+        parent_out = staying_mask * parent_in + swapping_mask * student_in
+        student_out = staying_mask * student_in + swapping_mask * parent_in
 
         return (parent_out, student_out)
 
