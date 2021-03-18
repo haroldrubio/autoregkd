@@ -17,14 +17,14 @@ import copy
 import sys
 from dataclasses import dataclass
 import torch
-from typing import Optional
+from typing import List, Optional
 import torch.nn.functional as F
 from torch import nn
 import random
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
-from transformers.models import bart
 from transformers.models.bart.configuration_bart import BartConfig
 from transformers.models.bart.modeling_bart import (
+    BartForQuestionAnswering, BartLearnedPositionalEmbedding,
     BartEncoder,
     BartDecoder,
     BartModel
@@ -32,29 +32,25 @@ from transformers.models.bart.modeling_bart import (
 
 class DistilBartConfig(BartConfig):
     def __init__(self,
-                 encoder_layer_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-                 decoder_layer_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
                  swap_prob=0,
-                 model_name = 'facebook/bart-large',
-                 decoder_type: str = 'distilbart',
+                 encoder_type: str = 'distill',
+                 decoder_type: str = 'distill',
+                 encoder_layer_indices: List[int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+                 decoder_layer_indices: List[int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+                 num_teacher_enc: int = 12,
+                 num_teacher_dec: int = 12,
                  **kwargs
                  ):
         super().__init__(
             **kwargs
         )
         self.swap_prob = swap_prob
-        self.model_name = model_name
-        self.encoder_layer_indices = encoder_layer_indices
-        self.decoder_layer_indices = decoder_layer_indices
-        self.encoder_layers = len(self.encoder_layer_indices)
-        self.decoder_layers = len(self.decoder_layer_indices)
+        self.encoder_type = encoder_type
         self.decoder_type = decoder_type
-    
-    def set_distillation(self, encoder_layer_indices, decoder_layer_indices):
         self.encoder_layer_indices = encoder_layer_indices
         self.decoder_layer_indices = decoder_layer_indices
-        self.encoder_layers = len(self.encoder_layer_indices)
-        self.decoder_layers = len(self.decoder_layer_indices)
+        self.num_teacher_enc = num_teacher_enc
+        self.num_teacher_dec = num_teacher_dec
 
 class DistilBartEncoder(BartEncoder):
     """
@@ -122,6 +118,12 @@ class DistilBart(BartModel):
         elif config.decoder_type == 'interpolation':
             self.decoder = InterpolationDecoder(config=config, bart_decoder=bart_model.decoder, embed_tokens=self.shared)
 
+class DistilBartForQuestionAnswering(BartForQuestionAnswering):
+    def __init__(self, config: DistilBartConfig):
+        super().__init__(config)
+        if config.decoder_type == 'interpolate':
+            self.model.decoder = InterpolationDecoder(config, self.model.shared)
+
 class InterpolationModule(nn.Module):
     """
     This module contains no parameters and performs a swapping operation on the hidden unit level
@@ -180,39 +182,32 @@ class InterpolationDecoder(BartDecoder):
         embed_tokens (torch.nn.Embedding): output embedding
     """
 
-    def __init__(self, config: DistilBartConfig, bart_decoder: BartDecoder, embed_tokens: Optional[nn.Embedding] = None):
+    def __init__(self, config: DistilBartConfig, embed_tokens: Optional[nn.Embedding] = None):
         super().__init__(config=config, embed_tokens=embed_tokens)
         # Copy structural layers and some of the transformer layers into the student
         self.decoder_layer_indices = config.decoder_layer_indices
-        self.std_layers = nn.ModuleList()
-        for i in config.decoder_layer_indices:
-            self.std_layers.append(copy.deepcopy(bart_decoder.layers[i]))
-        self.std_embed_tokens = copy.deepcopy(bart_decoder.embed_tokens)
-        self.std_embed_positions = copy.deepcopy(bart_decoder.embed_positions)
-        self.std_layernorm_embedding = copy.deepcopy(bart_decoder.layernorm_embedding)
-
-        # Copy structural layers and ALL transformer layers into the teacher
-        self.layers = nn.ModuleList()
-        for layer in bart_decoder.layers:
-            self.layers.append(copy.deepcopy(layer))
-        self.embed_tokens = copy.deepcopy(bart_decoder.embed_tokens)
-        self.embed_positions = copy.deepcopy(bart_decoder.embed_positions)
-        self.layernorm_embedding = copy.deepcopy(bart_decoder.layernorm_embedding)
-
-        # Freeze teacher parameters
-        for l in self.layers:
-            for p in l.parameters():
-                p.requires_grad = False
-        for p in self.embed_tokens.parameters():
-            p.requires_grad = False
-        for p in self.embed_positions.parameters():
-            p.requires_grad = False
-        for p in self.layernorm_embedding.parameters():
-            p.requires_grad = False
-
+        # Initialize student layers to some subset of the teacher, these will be set later
+        self.std_layers = nn.ModuleList([self.layers[i] for i in range(len(config.decoder_layer_indices))])
+        if embed_tokens is not None:
+            self.std_embed_tokens = embed_tokens
+        else:
+            self.std_embed_tokens = nn.Embedding(config.vocab_size, config.d_model, self.padding_idx)
+        self.std_embed_positions = BartLearnedPositionalEmbedding(
+            config.max_position_embeddings,
+            config.d_model,
+            self.padding_idx,
+        )
+        self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
         # Decoder has one interpolation module per student layer minus 1
         # Since the final outputs are not interpolated
         self.interp = nn.ModuleList([InterpolationModule(config.swap_prob) for _ in range(config.decoder_layers - 1)])
+
+    def load_std_embeds(self):
+        """After the model has been initialized and teacher information has been loaded, initialize the student
+           embeddings from the teacher"""
+        self.std_embed_tokens.load_state_dict(self.embed_tokens.state_dict())
+        self.std_embed_positions.load_state_dict(self.embed_positions.state_dict())
+        self.std_layernorm_embedding.load_state_dict(self.layernorm_embedding.state_dict())
 
     def forward(
         self,
@@ -229,24 +224,6 @@ class InterpolationDecoder(BartDecoder):
         output_hidden_states=None,
         return_dict=None,
     ):  
-        # Harold: debug print shapes
-        '''
-        if input_ids is not None:
-            print(f'input: {input_ids.shape}')
-        if attention_mask is not None:
-            print(f'att: {attention_mask.shape}')
-        if encoder_hidden_states is not None:
-            print(f'enc_hid: {encoder_hidden_states.shape}')
-        if encoder_attention_mask is not None:
-            print(f'enc_att: {encoder_attention_mask.shape}')
-        if head_mask is not None:
-            print(f'head_mask: {head_mask.shape}')
-        if encoder_head_mask is not None:
-            print(f'enc_head: {encoder_head_mask}')
-        if inputs_embeds is not None:
-            print(f'input_emb: {inputs_embeds.shape}')
-        print(f'return dict: {return_dict}')
-        '''
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -407,12 +384,12 @@ class InterpolationDecoder(BartDecoder):
                 # TODO: Debug - skip interpolation
                 
                 # Check if interpolation module exists at this pairing
-                '''
+                
                 if interp_idx < len(self.interp):
                     # If it does, fetch the interpolation module
                     interp_module = self.interp[interp_idx]
                     hidden_states, std_hidden_states = interp_module(hidden_states, std_hidden_states)
-                '''
+                
                 # Step the indices
                 interp_idx += 1
                 if interp_idx < len(self.decoder_layer_indices):

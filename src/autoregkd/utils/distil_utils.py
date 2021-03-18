@@ -8,6 +8,11 @@ from torch import nn
 from transformers import AutoModelForQuestionAnswering, AutoTokenizer, PreTrainedModel
 from transformers.utils import logging
 
+from ..models.custom_bart import(
+    DistilBartConfig,
+    DistilBartForQuestionAnswering
+)
+
 LAYERS_TO_COPY = {
     # maps  num layers in teacher -> num_layers in student -> which teacher layers to copy.
     # 12: bart, 16: pegasus, 6: marian/Helsinki-NLP
@@ -76,6 +81,8 @@ def create_qa_student_by_copying_alternating_layers(
     copy_first_teacher_layers=False,
     e_layers_to_copy=None,
     d_layers_to_copy=None,
+    enc_interpolate=False,
+    dec_interpolate=False,
     **extra_config_kwargs
 ) -> Tuple[PreTrainedModel, List[int], List[int]]:
     """Make a student by copying alternating layers from a teacher, save it to save_path.
@@ -86,6 +93,8 @@ def create_qa_student_by_copying_alternating_layers(
         e: how many Encoder layers should the student have, default is fully copy of teacher
         d: how many Decoder layers should the student have, default is fully copy of teacher
         copy_first_teacher_layers: [bool] dont copy alternating layers, just the first e/d.
+        enc_interpolate: [bool] interpolate over the encoder
+        dec_interpolate: [bool] interpolate over the decoder
         **extra_config_kwargs: extra kwargs to pass to the student, by default the teacher config is used.
     Returns:
         student: new, smaller model.  (Also saves it to save_path)
@@ -108,7 +117,11 @@ def create_qa_student_by_copying_alternating_layers(
             e = teacher_e
         if d is None:
             d = teacher_d
-        init_kwargs.update({"encoder_layers": e, "decoder_layers": d})
+        if enc_interpolate or dec_interpolate:
+            init_kwargs.update({"encoder_layers": teacher_e, "decoder_layers": teacher_d})
+        else:            
+            init_kwargs.update({"encoder_layers": e, "decoder_layers": d})
+        init_kwargs.update({"num_teacher_enc": teacher_e, "num_teacher_dec": teacher_d})
     except AttributeError:  # T5
         teacher_e, teacher_d = teacher.config.num_layers, teacher.config.num_decoder_layers
         if e is None:
@@ -117,14 +130,34 @@ def create_qa_student_by_copying_alternating_layers(
             d = teacher_d
         init_kwargs.update({"num_layers": e, "num_decoder_layers": d})
 
+    # Decide which layers of the teacher to copy. Not exactly alternating -- we try to keep first and last layer.
+    if e_layers_to_copy is None:
+        e_layers_to_copy: List[int] = pick_layers_to_copy(e, teacher_e)
+        init_kwargs.update({'encoder_layer_indices': e_layers_to_copy})
+    if d_layers_to_copy is None:
+        d_layers_to_copy: List[int] = pick_layers_to_copy(d, teacher_d)
+        init_kwargs.update({'decoder_layer_indices': d_layers_to_copy})
+
+    # Parse encoder/decoder types
+    if enc_interpolate:
+        init_kwargs.update({'encoder_type': 'interpolate'})
+    if dec_interpolate:
+        init_kwargs.update({'decoder_type': 'interpolate'})
+
     # Kwargs to instantiate student: teacher kwargs with updated layer numbers + **extra_config_kwargs
     init_kwargs.update(extra_config_kwargs)
 
     # Copy weights
-    student_cfg = teacher.config_class(**init_kwargs)
-    student = AutoModelForQuestionAnswering.from_config(student_cfg)
-    # Start by copying the full teacher state dict this will copy the first N teacher layers to the student.
-    info = student.load_state_dict(teacher.state_dict(), strict=False)
+    student_cfg = DistilBartConfig(**init_kwargs)
+    student = DistilBartForQuestionAnswering(config=student_cfg)
+    # Handle case of extra student pipeline
+    if enc_interpolate or dec_interpolate:
+        # Either enc/dec will have an extra student pipeline that will throw an error, so limited copy
+        info = limited_copy(student, teacher)
+    else:
+        # Start by copying the full teacher state dict this will copy the first N teacher layers to the student.
+        info = student.load_state_dict(teacher.state_dict(), strict=False)
+
     assert info.missing_keys == [], info.missing_keys  # every student key should have a teacher keys.
 
     if copy_first_teacher_layers:  # Our copying is done. We just log and save
@@ -132,15 +165,17 @@ def create_qa_student_by_copying_alternating_layers(
         student.save_pretrained(save_path)
         return student, e_layers_to_copy, d_layers_to_copy
 
-    # Decide which layers of the teacher to copy. Not exactly alternating -- we try to keep first and last layer.
-    if e_layers_to_copy is None:
-        e_layers_to_copy: List[int] = pick_layers_to_copy(e, teacher_e)
-    if d_layers_to_copy is None:
-        d_layers_to_copy: List[int] = pick_layers_to_copy(d, teacher_d)
-
     try:
-        copy_layers(teacher.model.encoder.layers, student.model.encoder.layers, e_layers_to_copy)
-        copy_layers(teacher.model.decoder.layers, student.model.decoder.layers, d_layers_to_copy)
+        # If interpolating: copy into student pipeline
+        if enc_interpolate:
+            copy_layers(teacher.model.encoder.layers, student.model.encoder.std_layers, e_layers_to_copy)
+        else:
+            copy_layers(teacher.model.encoder.layers, student.model.encoder.layers, e_layers_to_copy)
+        if dec_interpolate:
+            copy_layers(teacher.model.decoder.layers, student.model.decoder.std_layers, d_layers_to_copy)
+            student.model.decoder.load_std_embeds()
+        else:
+             copy_layers(teacher.model.decoder.layers, student.model.decoder.layers, d_layers_to_copy)
     except AttributeError:  # For t5, student.model.encoder.layers is called student.encoder.block
         copy_layers(teacher.encoder.block, student.encoder.block, e_layers_to_copy)
         copy_layers(teacher.decoder.block, student.decoder.block, d_layers_to_copy)
@@ -178,3 +213,14 @@ def freeze_embeds(model):
         for d in [model.model.encoder, model.model.decoder]:
             freeze_params(d.embed_positions)
             freeze_params(d.embed_tokens)
+    
+def limited_copy(dest_model: nn.Module, src_model: nn.Module):
+    """Given that the destination model has less functionality than the source model,
+    copy all available information into the destination model"""
+    dest_dict = dest_model.state_dict()
+    src_dict = src_model.state_dict()
+    # Partial update 
+    dest_dict.update(src_dict)
+    # Set the state dict
+    info = dest_model.load_state_dict(dest_dict)
+    return info

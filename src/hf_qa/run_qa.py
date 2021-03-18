@@ -94,14 +94,17 @@ class ModelArguments:
         metadata={"help": "Number of decoder layesr to copy"}
     )
 
-    encoder_layer_indices: str = field(
-        default='0,1,2,3,4,5,6,7,8,9,10,11',
-        metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
+    enc_interpolate: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to perform interpolation on the encoder"
+        },
     )
-
-    decoder_layer_indices: str = field(
-        default='0,6,11',
-        metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
+    dec_interpolate: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to perform interpolation on the encoder"
+        },
     )
 
 
@@ -292,20 +295,11 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    '''
-    model = AutoModelForQuestionAnswering.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
-    '''
     # Harold: Overwrite the above assignments to support DistilBART
     model, _, _ = create_qa_student_by_copying_alternating_layers(
         teacher=model_args.model_name_or_path,
-        d=model_args.num_decoder_layers
+        d=model_args.num_decoder_layers,
+        dec_interpolate=model_args.dec_interpolate
     )
     freeze_embeds(model)
     freeze_params(model.model.get_encoder())
