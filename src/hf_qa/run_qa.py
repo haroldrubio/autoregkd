@@ -31,6 +31,11 @@ from ..autoregkd.models.custom_bart import (
     DistilBart,
     DistilBartConfig,
 )
+from ..autoregkd.utils.distil_utils import (
+    create_qa_student_by_copying_alternating_layers,
+    freeze_embeds,
+    freeze_params
+)
 from .trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -83,6 +88,12 @@ class ModelArguments:
             "with private models)."
         },
     )
+
+    num_decoder_layers: int = field(
+        default=3,
+        metadata={"help": "Number of decoder layesr to copy"}
+    )
+
     encoder_layer_indices: str = field(
         default='0,1,2,3,4,5,6,7,8,9,10,11',
         metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
@@ -281,6 +292,7 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
+    '''
     model = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -289,25 +301,15 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-
+    '''
     # Harold: Overwrite the above assignments to support DistilBART
-    # Parse indices
-    if type(model_args.encoder_layer_indices) == str:
-        e_indices = model_args.encoder_layer_indices.split(',')
-        d_indices = model_args.decoder_layer_indices.split(',')
-
-        e_indices = [int(ele) for ele in e_indices]
-        d_indices = [int(ele) for ele in d_indices]
-
-        model_args.encoder_layer_indices = e_indices
-        model_args.decoder_layer_indices = d_indices
-
-    config = DistilBartConfig().from_pretrained(model_args.model_name_or_path)
-    config.set_distillation(list(model_args.encoder_layer_indices), list(model_args.decoder_layer_indices))
-    bart_model = BartModel.from_pretrained(model_args.model_name_or_path)
-    distilbart_model = DistilBart(config=config, bart_model=bart_model)
-    model.model = distilbart_model
-
+    model, _, _ = create_qa_student_by_copying_alternating_layers(
+        teacher=model_args.model_name_or_path,
+        d=model_args.num_decoder_layers,
+        **config
+    )
+    freeze_embeds(model)
+    freeze_params(model.get_encoder())
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):
         raise ValueError(
