@@ -91,9 +91,12 @@ class ModelArguments:
 
     num_decoder_layers: int = field(
         default=3,
-        metadata={"help": "Number of decoder layesr to copy"}
+        metadata={"help": "Number of decoder layers to copy"}
+    )  
+    swap_prob: float = field(
+        default=0,
+        metadata={"help": "When performing interpolation, set a constant swapping rate"}
     )
-
     enc_interpolate: bool = field(
         default=False,
         metadata={
@@ -299,7 +302,8 @@ def main():
     model, _, _ = create_qa_student_by_copying_alternating_layers(
         teacher=model_args.model_name_or_path,
         d=model_args.num_decoder_layers,
-        dec_interpolate=model_args.dec_interpolate
+        dec_interpolate=model_args.dec_interpolate,
+        swap_prob=model_args.swap_prob
     )
     freeze_embeds(model)
     freeze_params(model.model.get_encoder())
