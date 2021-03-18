@@ -308,7 +308,7 @@ def main():
         d=model_args.num_decoder_layers
     )
     freeze_embeds(model)
-    freeze_params(model.get_encoder())
+    freeze_params(model.model.get_encoder())
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):
         raise ValueError(
