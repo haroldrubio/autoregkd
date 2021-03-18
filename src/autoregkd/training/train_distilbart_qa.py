@@ -32,13 +32,14 @@ from transformers import (
     set_seed
 )
 
-from .trainer_qa import QuestionAnsweringTrainer
-from .utils_qa import postprocess_qa_predictions
 from ..models.distilbart.configuration_distilbart import DistilBartConfig
 from ..models.distilbart.modeling_distilbart import (
     create_new_student,
     copy_to_student
 )
+
+from .trainer_qa import QuestionAnsweringTrainer
+from .utils_qa import postprocess_qa_predictions
 
 from datasets import load_dataset, load_metric
 
@@ -514,9 +515,12 @@ def main():
 
     # Eval steps (should be ~4 times per epoch)
     if training_args.do_train:
-        training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
-        training_args.logging_steps = training_args.eval_steps
-        training_args.save_steps = training_args.eval_steps
+        if training_args.do_eval:
+            training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
+            training_args.logging_steps = training_args.eval_steps
+            training_args.save_steps = training_args.eval_steps
+        else:
+            training_args.evaluation_strategy = "no"
 
     # Trainer
     trainer = QuestionAnsweringTrainer(

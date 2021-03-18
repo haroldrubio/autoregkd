@@ -37,6 +37,8 @@ from ..models.distilbart.modeling_distilbart import (
     copy_to_student
 )
 
+from .trainer_seq2seq import Seq2SeqKDTrainer
+
 from datasets import load_dataset, load_metric
 
 
@@ -75,6 +77,33 @@ class ModelArguments:
     decoder_layer_indices: Tuple = field(
         default=(0, 6, 11),
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
+    )
+
+    use_kd_loss: bool = field(
+        default=True,
+        metadata={"help": "Whether to add knowledge-distillation loss (logits and hidden loss). "
+                          "If False, the loss only includes data cross-entropy loss (same as SFT approach)"}
+    )
+
+    alpha_data: float = field(
+        default=1.0,
+        metadata={"help": "Weight for data loss. Default to 1.0"}
+    )
+
+    alpha_logits: float = field(
+        default=0.0,
+        metadata={"help": "Weight for logits loss. Default to 0.0 (does not contribute to the total loss)"}
+    )
+
+    alpha_hidden: float = field(
+        default=0.0,
+        metadata={"help": "Weight for hidden state loss. Default to 0.0 (does not contribute to the total loss)"}
+    )
+
+    normalize_hidden: bool = field(
+        default=False,
+        metadata={"help": "Whether to normalize hidden states before computing the loss. "
+                          "Only useful if use KD loss and alpha_hidden greater than 0"}
     )
 
 
@@ -234,8 +263,9 @@ def main():
 
     else:
         # Create a DistilBart model with layers copied from the original BART model
-        # BART teacher model
+        # Load BART teacher model and freeze it
         teacher_model = BartForConditionalGeneration.from_pretrained(model_args.model_name).eval()
+        freeze_weights(teacher_model)
 
         # Extract the teacher's configuration
         teacher_config = teacher_model.config.to_diff_dict()
@@ -413,19 +443,28 @@ def main():
 
     # Eval steps (should be 4 times per epoch)
     if training_args.do_train:
-        training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
-        training_args.logging_steps = training_args.eval_steps
-        training_args.save_steps = training_args.eval_steps
+        if training_args.do_eval:
+            training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
+            training_args.logging_steps = training_args.eval_steps
+            training_args.save_steps = training_args.eval_steps
+        else:
+            training_args.evaluation_strategy = "no"
 
     # Trainer
-    trainer = Seq2SeqTrainer(
+    trainer = Seq2SeqKDTrainer(
         model=student_model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_metrics if training_args.predict_with_generate else None
+        compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+        use_kd_loss=model_args.use_kd_loss,
+        teacher_model=teacher_model,
+        temperature=2.0,
+        alpha_data=model_args.alpha_data,
+        alpha_logits=model_args.alpha_logits,
+        alpha_hidden=model_args.alpha_hidden
     )
 
     # Early-stopping callback

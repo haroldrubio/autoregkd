@@ -49,4 +49,4 @@ def test_full_model_same_state_dict():
 
 def test_full_model_same_config():
     for k, v in bart_config_dict.items():
-        assert v == distilbart_config_dict[k], "Config mismatch key: {}".format(k)
+        assert v == distilbart_config_dict[k], "Config mismatch key: ".format(k)
