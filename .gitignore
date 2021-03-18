@@ -7,3 +7,9 @@ wandb
 *.egg-info/
 
 .lock
+
+__pycache__/
+.pytest_cache/
+
+runs
+model_outputs
