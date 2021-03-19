@@ -30,73 +30,69 @@ class Seq2SeqKDTrainer(Seq2SeqTrainer):
         super().__init__(*args, **kwargs)
         self.use_kd_loss = use_kd_loss
         self.teacher_model = teacher_model
+
+        # Get the configurations to compare sizes
+        self.student_config_dict = self.model.config.to_diff_dict()
+        self.teacher_config_dict = self.teacher_model.config.to_diff_dict()
+
         self.temperature = temperature
         self.normalize_hidden = normalize_hidden
+
         self.alpha_data = alpha_data
         self.alpha_logits = alpha_logits
         self.alpha_hidden = alpha_hidden
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        # Set up variables
-        input_ids, source_mask, labels = inputs["input_ids"], inputs["attention_mask"], inputs["labels"]
-        pad_token_id = self.tokenizer.pad_token_id
+        # Update inputs to output hidden states and in form of a dictionary
+        inputs["output_hidden_states"] = self.use_kd_loss
+        inputs["return_dict"] = True
 
-        # Get output from both models
-        student_outputs = model(**inputs,
-                                output_hidden_states=True,
-                                return_dict=True)
-
-        # Compute data loss, which is the default loss for Seq2SeqTrainer
-        # Copied from HF's Trainer source code
-        # Save past state if it exists
-        if self.args.past_index >= 0:
-            self._past = student_outputs[self.args.past_index]
-
-        if self.label_smoother is not None and labels is not None:
-            data_loss = self.label_smoother(student_outputs, labels)
-        else:
-            # We don't use .loss here since the model may return tuples instead of ModelOutput.
-            data_loss = student_outputs["loss"] if isinstance(student_outputs, dict) else student_outputs[0]
+        # Compute cross-entropy data loss, which is identical to the default loss of Seq2SeqTrainer
+        data_loss, student_outputs = super().compute_loss(model, inputs, return_outputs=True)
 
         # Compute KD component losses
         # Initialize losses to all 0s and only update if we use knowledge-distillation loss
         enc_hidden_loss, dec_hidden_loss, logits_loss = 0.0, 0.0, 0.0
         if self.use_kd_loss:
-            teacher_outputs = self.teacher_model(**inputs,
-                                                 output_hidden_states=True,
-                                                 return_dict=True)
-
-            # Compute logits loss
+            # Set up variables
+            input_ids, source_mask, labels = inputs["input_ids"], inputs["attention_mask"], inputs["labels"]
+            pad_token_id = self.tokenizer.pad_token_id
             decoder_input_ids = shift_tokens_right(input_ids=labels,
                                                    pad_token_id=pad_token_id,
                                                    decoder_start_token_id=self.teacher_model.config.decoder_start_token_id)
+
+            teacher_model = self.teacher_model.to(input_ids.device)
+            teacher_outputs = teacher_model(input_ids=input_ids,
+                                            attention_mask=source_mask,
+                                            decoder_input_ids=decoder_input_ids,
+                                            output_hidden_states=True,
+                                            return_dict=True,
+                                            use_cache=False)
+
+            # Compute logits loss
             decoder_mask = decoder_input_ids.ne(pad_token_id)
             logits_loss = self._compute_logits_loss(student_logits=student_outputs.logits,
                                                     teacher_logits=teacher_outputs.logits,
                                                     mask=decoder_mask,
                                                     temperature=self.temperature)
 
-            # Get the configurations to compare sizes
-            student_config_dict = model.config.to_diff_dict()
-            teacher_config_dict = self.teacher_model.config.to_diff_dict()
-
             # Only compute encoder's hidden loss if the student's encoder is smaller
-            if student_config_dict["encoder_layers"] < teacher_config_dict["encoder_layers"]:
+            if self.student_config_dict["encoder_layers"] < self.teacher_config_dict["encoder_layers"]:
                 enc_hidden_loss = self._compute_hidden_loss(
                     student_hidden_states=student_outputs.encoder_hidden_states,
                     teacher_hidden_states=teacher_outputs.encoder_hidden_states,
                     attention_mask=source_mask,
-                    teacher_layer_indices=student_config_dict["encoder_layer_indices"],
+                    teacher_layer_indices=self.student_config_dict["encoder_layer_indices"],
                     normalize=self.normalize_hidden
                 )
 
             # Only compute decoder's hidden loss if the student's decoder is smaller
-            if student_config_dict["decoder_layers"] < teacher_config_dict["decoder_layers"]:
+            if self.student_config_dict["decoder_layers"] < self.teacher_config_dict["decoder_layers"]:
                 dec_hidden_loss = self._compute_hidden_loss(
                     student_hidden_states=student_outputs.decoder_hidden_states,
                     teacher_hidden_states=teacher_outputs.decoder_hidden_states,
                     attention_mask=decoder_mask,
-                    teacher_layer_indices=student_config_dict["decoder_layer_indices"],
+                    teacher_layer_indices=self.student_config_dict["decoder_layer_indices"],
                     normalize=self.normalize_hidden
                 )
 
@@ -132,7 +128,6 @@ class Seq2SeqKDTrainer(Seq2SeqTrainer):
         )
 
         return logits_loss
-
 
     @staticmethod
     def _compute_hidden_loss(student_hidden_states: Tuple[torch.Tensor],

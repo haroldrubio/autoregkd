@@ -26,13 +26,12 @@ tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
 
 ARTICLE_TO_SUMMARIZE = "My friends are cool but they eat too many carbs."
 inputs = tokenizer([ARTICLE_TO_SUMMARIZE], max_length=1024, return_tensors='pt')
-print(inputs, type(inputs["attention_mask"]))
-
+inputs["output_hidden_states"] = True
 # Generate Summary
-outputs = bart_model(**inputs, output_hidden_states=True)
+outputs = bart_model(**inputs)
 print(len(outputs.decoder_hidden_states), len(outputs.encoder_hidden_states))
 
-outputs = distilbart_model(**inputs, output_hidden_states=True)
+outputs = distilbart_model(**inputs)
 print(len(outputs.decoder_hidden_states), len(outputs.encoder_hidden_states))
 
 """
