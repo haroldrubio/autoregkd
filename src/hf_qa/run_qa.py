@@ -34,7 +34,9 @@ from ..autoregkd.models.custom_bart import (
 from ..autoregkd.utils.distil_utils import (
     create_qa_student_by_copying_alternating_layers,
     freeze_embeds,
-    freeze_params
+    freeze_params,
+    assert_all_frozen,
+    assert_not_all_frozen
 )
 from .trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -146,10 +148,17 @@ def main(model_args, data_args, training_args):
         teacher=model_args.model_name_or_path,
         d=model_args.num_decoder_layers,
         dec_interpolate=model_args.dec_interpolate,
-        swap_prob=model_args.swap_prob
+        swap_prob=model_args.swap_prob,
+        loss_type=model_args.loss_type
     )
     freeze_embeds(model)
+    
     freeze_params(model.model.get_encoder())
+    assert_all_frozen(model.model.get_encoder())
+    '''
+    freeze_params(model.model.get_decoder())
+    assert_all_frozen(model.model.get_decoder())
+    '''
 
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):

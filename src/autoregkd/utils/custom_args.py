@@ -44,6 +44,10 @@ class ModelArguments:
             "with private models)."
         },
     )
+    loss_type: str = field(
+        default="finetune",
+        metadata={"help": "Supports finetune, interpolate"},
+    )
     num_decoder_layers: int = field(
         default=3,
         metadata={"help": "Number of decoder layers to copy"}

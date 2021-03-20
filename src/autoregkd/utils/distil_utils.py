@@ -1,7 +1,7 @@
 # HuggingFace DistilBART utils
 import warnings
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Iterable, Callable
 
 from torch import nn
 
@@ -224,3 +224,21 @@ def limited_copy(dest_model: nn.Module, src_model: nn.Module):
     # Set the state dict
     info = dest_model.load_state_dict(dest_dict)
     return info
+    
+def grad_status(model: nn.Module) -> Iterable:
+    return (par.requires_grad for par in model.parameters())
+
+def lmap(f: Callable, x: Iterable) -> List:
+    """list(map(f, x))"""
+    return list(map(f, x))
+
+def assert_all_frozen(model):
+    model_grads: List[bool] = list(grad_status(model))
+    n_require_grad = sum(lmap(int, model_grads))
+    npars = len(model_grads)
+    assert not any(model_grads), f"{n_require_grad/npars:.1%} of {npars} weights require grad"
+
+def assert_not_all_frozen(model):
+    model_grads: List[bool] = list(grad_status(model))
+    npars = len(model_grads)
+    assert any(model_grads), f"none of {npars} weights require grad"

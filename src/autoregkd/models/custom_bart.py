@@ -21,6 +21,7 @@ import torch
 from typing import List, Optional
 import torch.nn.functional as F
 from torch import nn
+from torch.nn import CrossEntropyLoss
 import random
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 from transformers.models.bart.configuration_bart import BartConfig
@@ -28,7 +29,8 @@ from transformers.models.bart.modeling_bart import (
     BartForQuestionAnswering, BartLearnedPositionalEmbedding,
     BartEncoder,
     BartDecoder,
-    BartModel
+    BartModel,
+    Seq2SeqQuestionAnsweringModelOutput
 )
 
 class DistilBartConfig(BartConfig):
@@ -40,6 +42,7 @@ class DistilBartConfig(BartConfig):
                  decoder_layer_indices: List[int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
                  num_teacher_enc: int = 12,
                  num_teacher_dec: int = 12,
+                 loss_type: str = 'finetune',
                  **kwargs
                  ):
         super().__init__(
@@ -52,6 +55,7 @@ class DistilBartConfig(BartConfig):
         self.decoder_layer_indices = decoder_layer_indices
         self.num_teacher_enc = num_teacher_enc
         self.num_teacher_dec = num_teacher_dec
+        self.loss_type = loss_type
 
 class DistilBartEncoder(BartEncoder):
     """
@@ -122,8 +126,126 @@ class DistilBart(BartModel):
 class DistilBartForQuestionAnswering(BartForQuestionAnswering):
     def __init__(self, config: DistilBartConfig):
         super().__init__(config)
+        # Handle decoder type
         if config.decoder_type == 'interpolate':
             self.model.decoder = InterpolationDecoder(config, self.model.shared)
+
+        # Handle loss type
+        self.loss_type = config.loss_type
+    
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        decoder_input_ids=None,
+        decoder_attention_mask=None,
+        head_mask=None,
+        decoder_head_mask=None,
+        encoder_outputs=None,
+        start_positions=None,
+        end_positions=None,
+        inputs_embeds=None,
+        decoder_inputs_embeds=None,
+        use_cache=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+    ):
+        r"""
+        start_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+            Labels for position (index) of the start of the labelled span for computing the token classification loss.
+            Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+            are not taken into account for computing the loss.
+        end_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+            Labels for position (index) of the end of the labelled span for computing the token classification loss.
+            Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
+            are not taken into account for computing the loss.
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        if start_positions is not None and end_positions is not None:
+            use_cache = False
+        outputs = self.model(
+            input_ids,
+            attention_mask=attention_mask,
+            decoder_input_ids=decoder_input_ids,
+            decoder_attention_mask=decoder_attention_mask,
+            head_mask=head_mask,
+            decoder_head_mask=decoder_head_mask,
+            encoder_outputs=encoder_outputs,
+            inputs_embeds=inputs_embeds,
+            decoder_inputs_embeds=decoder_inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        sequence_output = outputs[0]
+
+        logits = self.qa_outputs(sequence_output)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1)
+        end_logits = end_logits.squeeze(-1)
+
+        total_loss = None
+        std_loss = None
+        if start_positions is not None and end_positions is not None:
+            # If we are on multi-GPU, split add a dimension
+            if len(start_positions.size()) > 1:
+                start_positions = start_positions.squeeze(-1)
+            if len(end_positions.size()) > 1:
+                end_positions = end_positions.squeeze(-1)
+            # sometimes the start/end positions are outside our model inputs, we ignore these terms
+            ignored_index = start_logits.size(1)
+            start_positions.clamp_(0, ignored_index)
+            end_positions.clamp_(0, ignored_index)
+
+            loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
+            start_loss = loss_fct(start_logits, start_positions)
+            end_loss = loss_fct(end_logits, end_positions)
+            std_loss = (start_loss + end_loss) / 2
+
+        # Harold: Handle interpolation loss - perform loss computation twice
+        if self.loss_type == 'interpolate':
+            # Obtain teacher hidden states
+            tch_sequence_output = outputs[1]
+
+            tch_logits = self.qa_outputs(tch_sequence_output)
+            tch_start_logits, tch_end_logits = tch_logits.split(1, dim=-1)
+            tch_start_logits = tch_start_logits.squeeze(-1)
+            tch_end_logits = tch_end_logits.squeeze(-1)
+
+            teach_loss = 0
+            if start_positions is not None and end_positions is not None:
+
+                loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
+                tch_start_loss = loss_fct(tch_start_logits, start_positions)
+                tch_end_loss = loss_fct(tch_end_logits, end_positions)
+                teach_loss = (tch_start_loss + tch_end_loss) / 2
+            
+            total_loss = (teach_loss + std_loss) / 2
+        else:
+            total_loss = std_loss
+
+        if not return_dict:
+            output = (
+                start_logits,
+                end_logits,
+            ) + outputs[1:]
+            return ((total_loss,) + output) if total_loss is not None else output
+
+        return Seq2SeqQuestionAnsweringModelOutput(
+            loss=total_loss,
+            start_logits=start_logits,
+            end_logits=end_logits,
+            past_key_values=outputs.past_key_values,
+            decoder_hidden_states=outputs.decoder_hidden_states,
+            decoder_attentions=outputs.decoder_attentions,
+            cross_attentions=outputs.cross_attentions,
+            encoder_last_hidden_state=outputs.encoder_last_hidden_state,
+            encoder_hidden_states=outputs.encoder_hidden_states,
+            encoder_attentions=outputs.encoder_attentions,
+        )
 
 class InterpolationModule(nn.Module):
     """
@@ -215,6 +337,7 @@ class InterpolationDecoder(BartDecoder):
         self.load_std_embeds()
         self.freeze_std_embeds()
         self.freeze_teacher_layers()
+        self.unfreeze_std_layers()
 
     def load_std_embeds(self):
         """ After the model has been initialized and teacher information has been loaded, initialize the student
@@ -235,6 +358,11 @@ class InterpolationDecoder(BartDecoder):
             p.requires_grad = False
         for p in self.std_embed_tokens.parameters():
             p.requires_grad = False
+    
+    def unfreeze_std_layers(self):
+        for l in self.std_layers:
+            for p in l.parameters():
+                p.requires_grad = True
 
     def forward(
         self,
@@ -280,12 +408,8 @@ class InterpolationDecoder(BartDecoder):
             std_input_embeds = self.std_embed_tokens(input_ids) * self.embed_scale
           
         # Harold: Maybe change in attention mask?
-        old_attn_mask = attention_mask
         attention_mask = self._prepare_decoder_attention_mask(
             attention_mask, input_shape, inputs_embeds, past_key_values_length
-        )
-        std_attention_mask = self._prepare_decoder_attention_mask(
-            old_attn_mask, input_shape, std_input_embeds, past_key_values_length
         )
 
         # expand encoder attention mask
@@ -347,14 +471,13 @@ class InterpolationDecoder(BartDecoder):
 
                     return custom_forward
                 # Harold: if arrived at layer aligned pair - perform a student pass
-                std_layer_outputs = None
                 if idx == std_parallel:
                     # Fetch student decoder layer
                     std_decoder_layer = self.std_layers[interp_idx]
                     std_layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(std_decoder_layer),
                     std_hidden_states,
-                    std_attention_mask,
+                    attention_mask,
                     encoder_hidden_states,
                     encoder_attention_mask,
                     head_mask[idx] if head_mask is not None else None,
@@ -373,13 +496,12 @@ class InterpolationDecoder(BartDecoder):
                 )
             else:
                 # Harold: Same as above for non gradient checkpoint case
-                std_layer_outputs = None
                 if idx == std_parallel:
                     # Fetch student decoder layer
                     std_decoder_layer = self.std_layers[interp_idx]
                     std_layer_outputs = std_decoder_layer(
                     std_hidden_states,
-                    attention_mask=std_attention_mask,
+                    attention_mask=attention_mask,
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
                     layer_head_mask=(head_mask[idx] if head_mask is not None else None),
@@ -441,7 +563,7 @@ class InterpolationDecoder(BartDecoder):
         if not return_dict:
             return tuple(
                 v
-                for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
         # Harold: handle the parsing of last hidden states downstream by cutting the states in half
