@@ -14,6 +14,7 @@
 # limitations under the License.
 """ PyTorch BART model. """
 import copy
+from re import L
 import sys
 from dataclasses import dataclass
 import torch
@@ -205,12 +206,35 @@ class InterpolationDecoder(BartDecoder):
         # Since the final outputs are not interpolated
         self.interp = nn.ModuleList([InterpolationModule(config.swap_prob) for _ in range(config.decoder_layers - 1)])
 
+
+    def setup_interpolation(self):
+        """
+        Wrapper function that should be called after teacher parameters are loaded in
+        Loads in the embeddings, freezes the teacher highway, and student embeddings
+        """
+        self.load_std_embeds()
+        self.freeze_std_embeds()
+        self.freeze_teacher_layers()
+
     def load_std_embeds(self):
-        """After the model has been initialized and teacher information has been loaded, initialize the student
-           embeddings from the teacher"""
+        """ After the model has been initialized and teacher information has been loaded, initialize the student
+           embeddings from the teacher, and freeze these embeddings """
         self.std_embed_tokens.load_state_dict(self.embed_tokens.state_dict())
         self.std_embed_positions.load_state_dict(self.embed_positions.state_dict())
         self.std_layernorm_embedding.load_state_dict(self.layernorm_embedding.state_dict())
+    
+    def freeze_teacher_layers(self):
+        """ Freeze the teacher highway gradients """
+        for l in self.layers:
+            for p in l.parameters():
+                p.requires_grad = False
+    
+    def freeze_std_embeds(self):
+        """ Freeze the student copy of the embeddings """
+        for p in self.std_embed_positions.parameters():
+            p.requires_grad = False
+        for p in self.std_embed_tokens.parameters():
+            p.requires_grad = False
 
     def forward(
         self,

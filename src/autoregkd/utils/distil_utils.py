@@ -173,7 +173,7 @@ def create_qa_student_by_copying_alternating_layers(
             copy_layers(teacher.model.encoder.layers, student.model.encoder.layers, e_layers_to_copy)
         if dec_interpolate:
             copy_layers(teacher.model.decoder.layers, student.model.decoder.std_layers, d_layers_to_copy)
-            student.model.decoder.load_std_embeds()
+            student.model.decoder.setup_interpolation()
         else:
              copy_layers(teacher.model.decoder.layers, student.model.decoder.layers, d_layers_to_copy)
     except AttributeError:  # For t5, student.model.encoder.layers is called student.encoder.block

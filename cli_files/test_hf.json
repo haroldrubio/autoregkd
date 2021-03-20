@@ -1,6 +1,6 @@
 {
   "dataset_name": "squad_v2",
-  "output_dir": "test_hf_bart_squad_local",
+  "output_dir": "test_bart_squad_v2",
   "model_name_or_path": "facebook/bart-large",
   "lr_scheduler_type": "linear",
   "learning_rate": 0.00001,
@@ -8,12 +8,12 @@
   "per_device_eval_batch_size": 4,
   "per_device_train_batch_size": 8,
   "max_train_samples": 100,
+  "max_val_samples": 100,
   "num_train_epochs": 1,
   "save_total_limit": 0,
   "save_steps": -1,
+  "logging_steps": 1,
   "do_train": true,
-  "do_eval": true,
-  "evaluation_strategy": "epoch",
   "version_2_with_negative": true,
   "seed": 42
 }
