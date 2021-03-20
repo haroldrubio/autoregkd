@@ -275,6 +275,7 @@ def main(model_args, data_args, training_args):
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
+            keep_in_memory=data_args.keep_in_memory
         )
         if data_args.max_train_samples is not None:
             # Number of samples might increase during Feature Creation, We select only specified max samples
@@ -336,6 +337,7 @@ def main(model_args, data_args, training_args):
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
+            keep_in_memory=data_args.keep_in_memory
         )
         if data_args.max_val_samples is not None:
             # During Feature creation dataset samples might increase, we will select required samples again

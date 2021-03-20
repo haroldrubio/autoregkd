@@ -109,6 +109,12 @@ class DataTrainingArguments:
             "be faster on GPU but will be slower on TPU)."
         },
     )
+    keep_in_memory: bool = field(
+        default=False,
+        metadata={
+            "help": "Keep the dataset in memory instead of writing it to a cache file"
+        },
+    )
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
