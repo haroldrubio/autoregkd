@@ -16,7 +16,7 @@
 import copy
 from re import L
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import torch
 from typing import List, Optional
 import torch.nn.functional as F
@@ -162,6 +162,10 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             are not taken into account for computing the loss.
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # Harold: overwrite return dict - this lets us easily modify what gets returned
+        return_dict = False
+
         if start_positions is not None and end_positions is not None:
             use_cache = False
         outputs = self.model(
@@ -181,7 +185,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         )
         # TODO: what is outputs?
         sequence_output = outputs[0]
-
+        
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
@@ -189,6 +193,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
 
         total_loss = None
         std_loss = None
+        teach_loss = None
         if start_positions is not None and end_positions is not None:
             # If we are on multi-GPU, split add a dimension
             if len(start_positions.size()) > 1:
@@ -208,22 +213,19 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         # Harold: Handle interpolation loss - perform loss computation twice
         if self.loss_type == 'interpolate':
             # Obtain teacher hidden states
-            tch_sequence_output = outputs[1]
 
+            tch_sequence_output = outputs[1]    
             tch_logits = self.qa_outputs(tch_sequence_output)
             tch_start_logits, tch_end_logits = tch_logits.split(1, dim=-1)
             tch_start_logits = tch_start_logits.squeeze(-1)
             tch_end_logits = tch_end_logits.squeeze(-1)
 
-            teach_loss = 0
             if start_positions is not None and end_positions is not None:
-
                 loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
                 tch_start_loss = loss_fct(tch_start_logits, start_positions)
                 tch_end_loss = loss_fct(tch_end_logits, end_positions)
                 teach_loss = (tch_start_loss + tch_end_loss) / 2
-            
-            total_loss = (teach_loss + std_loss) / 2
+                total_loss = (teach_loss + std_loss) / 2
         else:
             total_loss = std_loss
 
@@ -566,7 +568,7 @@ class InterpolationDecoder(BartDecoder):
                 for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
-        # Harold: handle the parsing of last hidden states downstream by cutting the states in half
+        # Harold: handle the parsing of last hidden states
         return DistilModelOutputWithPastAndCrossAttentions(
             last_hidden_state=std_hidden_states,
             teacher_hidden_state=hidden_states,

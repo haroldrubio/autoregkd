@@ -57,7 +57,8 @@ class QuestionAnsweringTrainer(Trainer):
 
         if self.post_process_function is not None and self.compute_metrics is not None:
             # Harold: Parse logits(?)
-            start_logits, end_logits, _ = output.predictions
+            start_logits = output.predictions[0]
+            end_logits = output.predictions[1]
             logits = (start_logits, end_logits)
             eval_preds = self.post_process_function(eval_examples, eval_dataset, logits)
             metrics = self.compute_metrics(eval_preds)
@@ -97,7 +98,8 @@ class QuestionAnsweringTrainer(Trainer):
             test_dataset.set_format(type=test_dataset.format["type"], columns=list(test_dataset.features.keys()))
 
         # Harold: Parse logits(?)
-        start_logits, end_logits, _ = output.predictions
+        start_logits = output.predictions[0]
+        end_logits = output.predictions[1]
         logits = (start_logits, end_logits)
         eval_preds = self.post_process_function(test_examples, test_dataset, logits)
         metrics = self.compute_metrics(eval_preds)
