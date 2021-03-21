@@ -211,7 +211,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             std_loss = (start_loss + end_loss) / 2
 
         # Harold: Handle interpolation loss - perform loss computation twice
-        if self.loss_type == 'interpolate':
+        if self.loss_type == 'interpolate' and self.training:
             # Obtain teacher hidden states
 
             tch_sequence_output = outputs[1]    

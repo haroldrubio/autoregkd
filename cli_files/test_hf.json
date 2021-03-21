@@ -4,7 +4,6 @@
   "model_name_or_path": "a-ware/bart-squadv2",
   "lr_scheduler_type": "linear",
   "dec_interpolate": true,
-  "loss_type": "interpolate",
   "swap_prob": 0.5,
   "learning_rate": 0.00001,
   "warmup_steps": 1000,
