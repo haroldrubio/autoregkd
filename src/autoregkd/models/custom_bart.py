@@ -184,7 +184,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             return_dict=return_dict,
         )
         # Harold: delete all but the first 2 items in outputs
-        del outputs[2:]
+        # del outputs[2:]
 
         sequence_output = outputs[0]
         
