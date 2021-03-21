@@ -183,7 +183,9 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        # TODO: what is outputs?
+        # Harold: delete all but the first 2 items in outputs
+        del outputs[1:]
+
         sequence_output = outputs[0]
         
         logits = self.qa_outputs(sequence_output)
