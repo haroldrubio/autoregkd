@@ -1,6 +1,6 @@
 {
   "dataset_name": "squad_v2",
-  "output_dir": "ref_inter_enc_frozen_p0.5_interloss",
+  "output_dir": "test_limited_val",
   "model_name_or_path": "a-ware/bart-squadv2",
   "lr_scheduler_type": "linear",
   "dec_interpolate": true,
@@ -17,6 +17,8 @@
   "save_steps": -1,
   "logging_steps": 1,
   "do_train": true,
+  "do_eval": true,
+  "evaluation_strategy": "epoch",
   "version_2_with_negative": true,
   "seed": 42
 }

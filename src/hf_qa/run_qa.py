@@ -323,6 +323,7 @@ def main(model_args, data_args, training_args):
 
         return tokenized_examples
 
+    eval_examples = datasets["validation"]
     if training_args.do_eval:
         if "validation" not in datasets:
             raise ValueError("--do_eval requires a validation dataset")
@@ -330,6 +331,7 @@ def main(model_args, data_args, training_args):
         if data_args.max_val_samples is not None:
             # We will select sample from whole data
             eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
+            eval_examples = eval_examples.select(range(data_args.max_val_samples))
         # Validation Feature Creation
         eval_dataset = eval_dataset.map(
             prepare_validation_features,
@@ -387,7 +389,7 @@ def main(model_args, data_args, training_args):
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
-        eval_examples=datasets["validation"] if training_args.do_eval else None,
+        eval_examples=eval_examples if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
         post_process_function=post_processing_function,
