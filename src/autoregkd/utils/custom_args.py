@@ -4,153 +4,171 @@ import os
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Optional, Tuple
-from transformers import TrainingArguments
+from transformers import Seq2SeqTrainingArguments
 
 @dataclass
-class CustomArguments(TrainingArguments):
-    test_name: str = field(
-        default="No World",
-        metadata={
-            "help": (
-                "A simple test"
-            )
-        },
+class DistilArguments(Seq2SeqTrainingArguments):
+    test_type: str = field(
+        default="distilbart",
+        metadata={"help": "The type of model"
+                          "Supports 'distilbart' and 'interpolation'"}
     )
 
 @dataclass
 class ModelArguments:
     """
-    Arguments for model
+    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-    model_name: str = field(
-        default="facebook/bart-base",
-        metadata={"help": "Name of BART model we will copy and fine-tune from (https://huggingface.co/models)"}
-    )
 
-    tokenizer_name: str = field(
-        default="facebook/bart-base",
-        metadata={"help": "Name of pre-trained BART tokenizer"}
+    model_name_or_path: str = field(
+        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
-
-    encoder_layer_indices: Tuple = field(
-        default=(0, 1, 2, 3, 4, 5),
-        metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
+    config_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
-
-    decoder_layer_indices: Tuple = field(
-        default=(0, 2, 5),
-        metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
+    tokenizer_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
-
-    save_final: bool = field(
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to directory to store the pretrained models downloaded from huggingface.co"},
+    )
+    model_revision: str = field(
+        default="main",
+        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
+    )
+    use_auth_token: bool = field(
         default=False,
-        metadata={"help": "Save the final model after training and/or evaluating"}
+        metadata={
+            "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
+            "with private models)."
+        },
+    )
+    loss_type: str = field(
+        default="finetune",
+        metadata={"help": "Supports finetune, interpolate"},
+    )
+    num_decoder_layers: int = field(
+        default=3,
+        metadata={"help": "Number of decoder layers to copy"}
+    )  
+    swap_prob: float = field(
+        default=0,
+        metadata={"help": "When performing interpolation, set a constant swapping rate"}
+    )
+    enc_interpolate: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to perform interpolation on the encoder"
+        },
+    )
+    dec_interpolate: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to perform interpolation on the encoder"
+        },
     )
 
 
 @dataclass
-class DatasetArguments:
+class DataTrainingArguments:
     """
-    Arguments for dataset
+    Arguments pertaining to what data we are going to input our model for training and eval.
     """
-    task: str = field(
-        default="summarization",
-        metadata={
-            "help": "Name of the task, should be either summarization, question-answering, or dialogue-generation"}
-    )
 
-    dataset_name: str = field(
-        default="xsum",
-        metadata={"help": "Name of the dataset to use (https://huggingface.co/datasets). "
-                          "Support xsum, squad, or conv_ai_2"}
+    dataset_name: Optional[str] = field(
+        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
-
+    dataset_config_name: Optional[str] = field(
+        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
+    )
+    train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
+    validation_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+    )
+    overwrite_cache: bool = field(
+        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
+    )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
-
-    overwrite_cache: bool = field(
-        default=False,
-        metadata={"help": "Overwrite the cached training and evaluation sets"}
+    max_seq_length: int = field(
+        default=384,
+        metadata={
+            "help": "The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
     )
-
-    max_source_length: Optional[int] = field(
-        default=1024,
-        metadata={"help": "The maximum number of input tokens"},
-    )
-
-    max_target_length: Optional[int] = field(
-        default=128,
-        metadata={"help": "The maximum number of output tokens"},
-    )
-
     pad_to_max_length: bool = field(
-        default=False,
-        metadata={"help": "Whether to pad to global max length or batch max length"}
-    )
-
-    ignore_pad_token_for_loss: bool = field(
         default=True,
-        metadata={"help": "Whether to ignore the tokens corresponding to padded labels in the loss computation or not."},
+        metadata={
+            "help": "Whether to pad all samples to `max_seq_length`. "
+            "If False, will pad the samples dynamically when batching to the maximum length in the batch (which can "
+            "be faster on GPU but will be slower on TPU)."
+        },
     )
-
+    keep_in_memory: bool = field(
+        default=False,
+        metadata={
+            "help": "Keep the dataset in memory instead of writing it to a cache file"
+        },
+    )
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
             "help": "For debugging purposes or quicker training, truncate the number of training examples to this "
-                    "value if set."
+            "value if set."
         },
     )
     max_val_samples: Optional[int] = field(
         default=None,
         metadata={
             "help": "For debugging purposes or quicker training, truncate the number of validation examples to this "
-                    "value if set."
+            "value if set."
         },
     )
-    max_test_samples: Optional[int] = field(
-        default=None,
+    val_on_training: bool = field(
+        default=False,
         metadata={
-            "help": "For debugging purposes or quicker training, truncate the number of test examples to this "
-                    "value if set."
-        },
-    )
-    num_beams: Optional[int] = field(
-        default=None,
-        metadata={"help": "Number of beams used in beam search during evaluation and prediction steps "},
-    )
-    # ==== QA ARGS ====
-    max_seq_length: int = field(
-        default=384,
-        metadata={
-            "help": "FOR QA: The maximum total input sequence length after tokenization. Sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
+            "help": "For debugging purposes, evaluate on the training set"
         },
     )
     version_2_with_negative: bool = field(
-        default=False, metadata={"help": "FOR QA: If true, some of the examples do not have an answer."}
+        default=False, metadata={"help": "If true, some of the examples do not have an answer."}
     )
     null_score_diff_threshold: float = field(
         default=0.0,
         metadata={
-            "help": "FOR QA: The threshold used to select the null answer: if the best answer has a score that is less than "
+            "help": "The threshold used to select the null answer: if the best answer has a score that is less than "
             "the score of the null answer minus this threshold, the null answer is selected for this example. "
             "Only useful when `version_2_with_negative=True`."
         },
     )
     doc_stride: int = field(
         default=128,
-        metadata={"help": "FOR QA: When splitting up a long document into chunks, how much stride to take between chunks."},
+        metadata={"help": "When splitting up a long document into chunks, how much stride to take between chunks."},
     )
     n_best_size: int = field(
         default=20,
-        metadata={"help": "FOR QA: The total number of n-best predictions to generate when looking for an answer."},
+        metadata={"help": "The total number of n-best predictions to generate when looking for an answer."},
     )
     max_answer_length: int = field(
         default=30,
         metadata={
-            "help": "FOR QA: The maximum length of an answer that can be generated. This is needed because the start "
+            "help": "The maximum length of an answer that can be generated. This is needed because the start "
             "and end predictions are not conditioned on one another."
         },
     )
+
+    def __post_init__(self):
+        if self.dataset_name is None and self.train_file is None and self.validation_file is None:
+            raise ValueError("Need either a dataset name or a training/validation file.")
+        else:
+            if self.train_file is not None:
+                extension = self.train_file.split(".")[-1]
+                assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
+            if self.validation_file is not None:
+                extension = self.validation_file.split(".")[-1]
+                assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."

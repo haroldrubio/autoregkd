@@ -4,7 +4,6 @@
 A subclass of `Trainer` specific to Question-Answering tasks
 """
 import time, collections, torch
-
 import sys
 from transformers import Trainer, is_datasets_available
 from transformers import Seq2SeqTrainer as SeqTrainer
@@ -25,7 +24,7 @@ class QuestionAnsweringTrainer(Trainer):
         self.eval_examples = eval_examples
         self.post_process_function = post_process_function
 
-    def evaluate(self, eval_dataset=None, eval_examples=None, ignore_keys=None):
+    def evaluate(self, eval_dataset=None, eval_examples=None, ignore_keys=None, metric_key_prefix="eval"):
         eval_dataset = self.eval_dataset if eval_dataset is None else eval_dataset
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
         eval_examples = self.eval_examples if eval_examples is None else eval_examples
@@ -41,6 +40,7 @@ class QuestionAnsweringTrainer(Trainer):
                 # self.args.prediction_loss_only
                 prediction_loss_only=True if compute_metrics is None else None,
                 ignore_keys=ignore_keys,
+
             )
         finally:
             self.compute_metrics = compute_metrics
@@ -50,12 +50,17 @@ class QuestionAnsweringTrainer(Trainer):
             eval_dataset.set_format(type=eval_dataset.format["type"], columns=list(eval_dataset.features.keys()))
 
         if self.post_process_function is not None and self.compute_metrics is not None:
-            real_preds = output.predictions
-            if len(output.predictions) > 2:
-                start_logits, end_logits, _ = output.predictions
-                real_preds = (start_logits, end_logits)
-            eval_preds = self.post_process_function(eval_examples, eval_dataset, real_preds)
+            # TODO: Harold - replace conditional with unconditional parsing
+            # Harold: Parse logits(?)
+            start_logits, end_logits, _ = output.predictions
+            logits = (start_logits, end_logits)
+            eval_preds = self.post_process_function(eval_examples, eval_dataset, logits)
             metrics = self.compute_metrics(eval_preds)
+
+            # Prefix all keys with metric_key_prefix + '_'
+            for key in list(metrics.keys()):
+                if not key.startswith(f"{metric_key_prefix}_"):
+                    metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
             self.log(metrics)
         else:
@@ -144,9 +149,6 @@ class Seq2SeqTrainer(SeqTrainer):
                 losses = loss.repeat(batch_size)
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             if logits is not None:
-                #real_preds = F.softmax(logits, dim=2)
-                #real_preds = torch.argmax(real_preds, dim=2)
-                #real_preds = self.tokenizer.batch_decode(logits, skip_special_tokens=True)
                 preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
             if labels is not None:
                 labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)

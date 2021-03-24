@@ -8,25 +8,34 @@ command:
   - "--model_name=facebook/bart-large"
   - "--encoder_layer_indices=0,1,2,3,4,5,6,7,8,9,10,11"
   - "--decoder_layer_indices=0,6,11"
-  - "--per_device_eval_batch_size=16"
+  - "--lr_scheduler_type=constant"
+  - "--per_device_eval_batch_size=4"
   - "--per_device_train_batch_size=8"
-  - "--max_train_samples=70000"
-  - "--max_val_samples=2000"
-  - "--num_train_epochs=1"
+  - "--num_train_epochs=0.5"
+  - "--eval_accumulation_steps=250"
   - "--save_total_limit=0"
-  - "--logging_steps=100"
   - "--save_steps=-1"
+  - "--logging_steps=100"
   - "--do_train=true"
-  - "--do_eval=true"
+  - "--evaluation_strategy=epoch"
   - "--version_2_with_negative=true"
   - "--seed=42"
   - ${args}
 method: bayes
 metric:
   goal: minimize
-  name: 'eval/loss'
+  name: 'train/loss'
 parameters:
   learning_rate:
     distribution: log_uniform
-    max: -4
-    min: -6
+    max: -3
+    min: -7
+  weight_decay:
+    distribution: log_uniform
+    max: -2
+    min: -7
+early_terminate:
+  type: hyperband
+  s: 2
+  eta: 3
+  max_iter: 27

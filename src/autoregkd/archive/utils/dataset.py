@@ -1,9 +1,10 @@
-from os import read
+import sys
 import torch
 import nltk
 from filelock import FileLock
 import numpy as np
 from transformers import (
+    AutoTokenizer,
     BartTokenizer,
     BartTokenizerFast,
     DataCollatorForSeq2Seq,
@@ -33,7 +34,10 @@ class ConvAIDataset(Dataset):
 class QA_Dataset():
     def __init__(self, training_args, model_args, data_args) -> None:
         # BART tokenizer
-        self.tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name,
+            use_fast=True,
+        )
         self.pad_on_right = self.tokenizer.padding_side == "right"
 
         # Store args
@@ -48,6 +52,7 @@ class QA_Dataset():
         self.raw_val_dataset = datasets['validation']  if 'validation' in datasets.keys() else None
 
         # Constrain datasets
+        # TODO: Harold: test debug - move dataset constraining
         if self.data_args.max_train_samples is not None:
                 self.train_dataset = self.train_dataset.select(range(self.data_args.max_train_samples))
         if self.data_args.max_val_samples is not None:
@@ -55,7 +60,9 @@ class QA_Dataset():
                 self.raw_val_dataset = self.raw_val_dataset.select(range(self.data_args.max_val_samples))
         # Get column names
         self.train_column_names = self.train_dataset.column_names
-        self.val_column_names = self.val_dataset.column_names
+        # TODO: Harold: test debug - always training so use train column names
+        self.val_column_names = self.train_column_names
+        # self.val_column_names = self.val_dataset.column_names
 
         # Check task
         if not data_args.task == "question-answering":
@@ -64,10 +71,13 @@ class QA_Dataset():
         self.metric = load_metric("squad_v2" if data_args.version_2_with_negative else "squad")
     
     def access_datasets(self):
-        train_dataset = None
+        # TODO: perform mapping on dataset, not actual selfdataset
+        train_dataset = self.train_dataset
+        if self.data_args.max_train_samples is not None:
+                train_dataset = train_dataset.select(range(self.data_args.max_train_samples))
         if self.train_dataset:
             column_names = self.train_column_names
-            train_dataset = self.train_dataset.map(
+            train_dataset = train_dataset.map(
                 self._pre_process_train,
                 batched=True,
                 num_proc=self.data_args.preprocessing_num_workers,
@@ -75,10 +85,12 @@ class QA_Dataset():
                 load_from_cache_file=not self.data_args.overwrite_cache
             )
 
-        val_dataset = None
+        val_dataset = self.val_dataset
+        if self.data_args.max_val_samples is not None:
+                val_dataset = val_dataset.select(range(self.data_args.max_val_samples))
         if self.val_dataset:
             column_names = self.val_column_names
-            val_dataset = self.val_dataset.map(
+            val_dataset = val_dataset.map(
                 self._pre_process_valid,
                 batched=True,
                 num_proc=self.data_args.preprocessing_num_workers,
