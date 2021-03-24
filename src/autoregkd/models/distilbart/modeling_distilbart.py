@@ -1,74 +1,37 @@
 import copy
 from typing import Optional
 
+import torch
 from torch import nn
 
 import transformers
 from transformers.models.bart.modeling_bart import (
-    BartEncoder,
-    BartDecoder,
-    BartModel,
-    BartForConditionalGeneration
+    BartPretrainedModel
 )
 
 from .configuration_distilbart import DistilBartConfig
 
 
-class DistilBartEncoder(BartEncoder):
-    """
-    """
-    def __init__(self,
-                 config: DistilBartConfig,
-                 bart_encoder: BartEncoder,
-                 embed_tokens: Optional[nn.Embedding] = None
-                 ):
-        super().__init__(config=config, embed_tokens=embed_tokens)
-        self.layers = nn.ModuleList()
-        for i in config.encoder_layer_indices:
-            self.layers.append(copy.deepcopy(bart_encoder.layers[i]))
+def create_new_student(teacher_model: BartPretrainedModel,
+                       config: DistilBartConfig):
+    # Get model class of the teacher
+    teacher_model_class = type(teacher_model)
 
-    def forward(self,
-                input_ids=None,
-                attention_mask=None,
-                head_mask=None,
-                inputs_embeds=None,
-                output_attentions=None,
-                output_hidden_states=None,
-                return_dict=None,
-                ):
-        super().forward(input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        head_mask=head_mask,
-                        inputs_embeds=inputs_embeds,
-                        output_attentions=output_attentions,
-                        output_hidden_states=output_hidden_states,
-                        return_dict=return_dict)
+    # Create a student model of the same class with the given config
+    student_model = teacher_model_class(config=config)
+    return student_model
 
 
-class DistilBartDecoder(BartDecoder):
-    """
-    """
-    def __init__(self,
-                 config: DistilBartConfig,
-                 bart_decoder: BartDecoder,
-                 embed_tokens: Optional[nn.Embedding] = None
-                 ):
-        super().__init__(config=config, embed_tokens=embed_tokens)
-        self.layers = nn.ModuleList()
-        for i in config.decoder_layer_indices:
-            self.layers.append(copy.deepcopy(bart_decoder.layers[i]))
+def copy_to_student(teacher_model: BartPretrainedModel,
+                    student_model: BartPretrainedModel,
+                    config: DistilBartConfig):
+    student_model.load_state_dict(teacher_model.state_dict(), strict=False)
 
+    # Copy the encoder's weights
+    for i, layer_idx in enumerate(config.encoder_layer_indices):
+        student_model.model.encoder.layers[i].load_state_dict(teacher_model.model.encoder.layers[layer_idx].state_dict())
 
-class DistilBart(BartForConditionalGeneration):
-    """
-    """
-    def __init__(self,
-                 config: DistilBartConfig,
-                 bart_model: BartModel
-                 ):
-        super().__init__(config)
-        padding_idx, vocab_size = config.pad_token_id, config.vocab_size
-        self.shared = nn.Embedding(vocab_size, config.d_model, padding_idx)
+    # Copy the decoder's weights
+    for i, layer_idx in enumerate(config.decoder_layer_indices):
+        student_model.model.decoder.layers[i].load_state_dict(teacher_model.model.decoder.layers[layer_idx].state_dict())
 
-        self.encoder = DistilBartEncoder(config=config, bart_encoder=bart_model.encoder, embed_tokens=self.shared)
-        self.decoder = DistilBartDecoder(config=config, bart_decoder=bart_model.decoder, embed_tokens=self.shared)

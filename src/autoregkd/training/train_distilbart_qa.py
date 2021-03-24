@@ -1,6 +1,6 @@
 """
-Training script to fine-tune Seq2Seq DistilBART for tasks such as summarization
-Based on https://github.com/huggingface/transformers/blob/master/examples/seq2seq/run_seq2seq.py
+Training script to fine-tune DistilBART for the Question-Answering task
+Based on https://colab.research.google.com/github/huggingface/notebooks/blob/master/examples/question_answering.ipynb#scrollTo=jwZn78Nfn1Sl
 """
 
 import sys
@@ -8,9 +8,11 @@ import os
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
+from collections import defaultdict, OrderedDict
 
 import nltk
 import numpy as np
+from tqdm.auto import tqdm
 from filelock import FileLock
 
 import torch
@@ -19,15 +21,14 @@ import torch.nn as nn
 import transformers
 from transformers import (
     BartConfig,
-    BartTokenizer,
-    BartModel,
-    BartForConditionalGeneration,
+    BartTokenizerFast,
+    BartForQuestionAnswering,
     HfArgumentParser,
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
+    TrainingArguments,
     EarlyStoppingCallback,
-    DataCollatorForSeq2Seq,
     default_data_collator,
+    DataCollatorWithPadding,
+    EvalPrediction,
     set_seed
 )
 
@@ -37,7 +38,8 @@ from ..models.distilbart.modeling_distilbart import (
     copy_to_student
 )
 
-from .trainer_seq2seq import Seq2SeqKDTrainer
+from .trainer_qa import QuestionAnsweringTrainer
+from .utils_qa import postprocess_qa_predictions
 
 from datasets import load_dataset, load_metric
 
@@ -75,35 +77,8 @@ class ModelArguments:
     )
 
     decoder_layer_indices: Tuple = field(
-        default=(0, 6, 11),
+        default=(0, 1, 2),
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
-    )
-
-    use_kd_loss: bool = field(
-        default=True,
-        metadata={"help": "Whether to add knowledge-distillation loss (logits and hidden loss). "
-                          "If False, the loss only includes data cross-entropy loss (same as SFT approach)"}
-    )
-
-    alpha_data: float = field(
-        default=1.0,
-        metadata={"help": "Weight for data loss. Default to 1.0"}
-    )
-
-    alpha_logits: float = field(
-        default=0.0,
-        metadata={"help": "Weight for logits loss. Default to 0.0 (does not contribute to the total loss)"}
-    )
-
-    alpha_hidden: float = field(
-        default=0.0,
-        metadata={"help": "Weight for hidden state loss. Default to 0.0 (does not contribute to the total loss)"}
-    )
-
-    normalize_hidden: bool = field(
-        default=False,
-        metadata={"help": "Whether to normalize hidden states before computing the loss. "
-                          "Only useful if use KD loss and alpha_hidden greater than 0"}
     )
 
 
@@ -113,15 +88,20 @@ class DatasetArguments:
     Arguments for dataset
     """
     task: str = field(
-        default="summarization",
+        default="question-answering",
         metadata={
-            "help": "Name of the task. Support only summarization at the moment"}
+            "help": "Name of the task. Support only question-answering at the moment"}
     )
 
     dataset_name: str = field(
-        default="xsum",
-        metadata={"help": "Name of the dataset to use (https://huggingface.co/datasets)"
-                          "Support xsum"}
+        default="squad",
+        metadata={"help": "Name of the dataset to use (https://huggingface.co/datasets). "
+                          "Support squad and squadv2"}
+    )
+
+    use_v2: bool = field(
+        default=False,
+        metadata={"help": "Whether to use SQuADv2 or not. Default to false (use SQuADv1)"}
     )
 
     preprocessing_num_workers: Optional[int] = field(
@@ -134,26 +114,18 @@ class DatasetArguments:
         metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
 
-    max_source_length: Optional[int] = field(
-        default=1024,
+    max_length: Optional[int] = field(
+        default=384,
         metadata={"help": "The maximum total sequence length for source text after tokenization"},
     )
 
-    max_target_length: Optional[int] = field(
+    doc_stride: int = field(
         default=128,
-        metadata={"help": "The maximum total sequence length for target text after tokenization"},
-    )
-
-    val_max_target_length: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "The maximum total sequence length for validation target text after tokenization. "
-                    "Default to max_target_length"
-        },
+        metadata={"help": "The authorized overlap between parts of context when splitting is necessary"}
     )
 
     pad_to_max_length: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Whether to pad to global max length or batch max length"}
     )
 
@@ -184,29 +156,51 @@ class DatasetArguments:
         },
     )
 
-    num_beams: Optional[int] = field(
-        default=6,
-        metadata={"help": "Number of beams used in beam search during evaluation and prediction steps "},
+    n_best_size: Optional[int] = field(
+        default=20,
+        metadata={"help": "Number of best start/end logits allowed"}
+    )
+
+    max_answer_length: Optional[int] = field(
+        default=30,
+        metadata={"help": "Maximum answer length allowed"}
+    )
+
+    null_score_diff_threshold: float = field(
+        default=0.0,
+        metadata={
+            "help": "The threshold used to select the null answer: if the best answer has a score that is less than "
+                    "the score of the null answer minus this threshold, the null answer is selected for this example. "
+                    "Only useful when `use_v2=True`."
+        }
     )
 
     def __post_init__(self):
-        if self.val_max_target_length is None:
-            self.val_max_target_length = self.max_target_length
+        # Update dataset name if we want to use v2 (for SQuAD)
+        if self.dataset_name == "squad" and self.use_v2:
+            self.dataset_name = "squad_v2"
 
 
 def main():
     logging.info("GPUs available: {}. Number of GPUs: {}".format(torch.cuda.is_available(), torch.cuda.device_count()))
     torch.cuda.empty_cache()
 
-    parser = HfArgumentParser((ModelArguments, DatasetArguments, Seq2SeqTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DatasetArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # Update output dir if necessary
+    if data_args.use_v2:
+        training_args.output_dir += "v2/"
+    else:
+        training_args.output_dir += "v1/"
+
     # Enable mixed precision training on CUDA device(s)
     if torch.cuda.is_available() and not training_args.no_cuda:
         training_args.fp16 = True
+        training_args.fp16_opt_level = "O1"
         logging.info("Mixed precision training enabled.")
 
     # Set seed for replicability
@@ -247,7 +241,8 @@ def main():
         return
 
     # BART tokenizer
-    tokenizer = BartTokenizer.from_pretrained(model_args.tokenizer_name)
+    tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
+    assert isinstance(tokenizer, transformers.PreTrainedTokenizerFast)
 
     def freeze_weights(module: nn.Module):
         """
@@ -259,13 +254,12 @@ def main():
     if model_args.use_hf_model:
         # Load a pre-trained checkpoint for BART
         config = BartConfig()
-        student_model = BartForConditionalGeneration(config=config).from_pretrained(model_args.model_name).eval()
+        student_model = BartForQuestionAnswering(config=config).from_pretrained(model_args.model_name).eval()
 
     else:
         # Create a DistilBart model with layers copied from the original BART model
-        # Load BART teacher model and freeze it
-        teacher_model = BartForConditionalGeneration.from_pretrained(model_args.model_name).eval()
-        freeze_weights(teacher_model)
+        # BART teacher model
+        teacher_model = BartForQuestionAnswering.from_pretrained(model_args.model_name).eval()
 
         # Extract the teacher's configuration
         teacher_config = teacher_model.config.to_diff_dict()
@@ -302,33 +296,83 @@ def main():
         ), "Expected the student's encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
 
     # Max lengths
-    max_source_length = data_args.max_source_length
-    max_target_length = data_args.max_target_length
+    max_length = data_args.max_length
     padding = "max_length" if data_args.pad_to_max_length else False
+    pad_on_right = tokenizer.padding_side == "right"
 
-    def preprocess_xsum(examples):
+    def preprocess_squad_train(examples):
         """
-        Pre-process examples from XSum
-        :param examples:
-        :return:
+        Pre-process SQuAD examples for training
         """
-        inputs = examples["document"]
-        targets = examples["summary"]
+        questions = examples["question"]
+        contexts = examples["context"]
 
-        # Tokenize source
-        model_inputs = tokenizer(inputs, max_length=max_source_length, padding=padding, truncation=True)
+        # Tokenize questions and contexts together
+        tokenized_examples = tokenizer(
+            questions if pad_on_right else contexts,
+            contexts if pad_on_right else questions,
+            truncation="only_second" if pad_on_right else "only_first",    # Only truncate contexts
+            padding=padding,
+            max_length=max_length,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+            stride=data_args.doc_stride
+        )
 
-        # Tokenize target
-        with tokenizer.as_target_tokenizer():
-            labels = tokenizer(targets, max_length=max_target_length, padding=padding, truncation=True)
+        # Map features to their corresponding examples (when splitted)
+        sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
 
-        if padding == "max_length" and data_args.ignore_pad_token_for_loss:
-            labels["input_ids"] = [
-                [(l if l != tokenizer.pad_token_id else -100) for l in label] for label in labels["input_ids"]
-            ]
+        # Map tokens to their positions in the original contexts
+        offset_mapping = tokenized_examples.pop("offset_mapping")
 
-        model_inputs["labels"] = labels["input_ids"]
-        return model_inputs
+        # Add the answer spans (start + end positions)
+        tokenized_examples["start_positions"] = []
+        tokenized_examples["end_positions"] = []
+
+        for i, offsets in enumerate(offset_mapping):
+            # Get index of CLS token
+            input_ids = tokenized_examples["input_ids"][i]
+            cls_index = input_ids.index(tokenizer.cls_token_id)
+
+            # Sequence ids (context vs. question)
+            sequence_ids = tokenized_examples.sequence_ids(i)
+
+            # Current example and answers
+            sample_index = sample_mapping[i]
+            answers = examples["answers"][sample_index]
+
+            # No answer case
+            if len(answers["answer_start"]) == 0:
+                tokenized_examples["start_positions"].append(cls_index)
+                tokenized_examples["end_positions"].append(cls_index)
+            else:
+                start_char = answers["answer_start"][0]
+                end_char = start_char + len(answers["text"][0])
+
+                # Make sure we start at the beginning of the context
+                token_start_index = 0
+                while sequence_ids[token_start_index] != (1 if pad_on_right else 0):
+                    token_start_index += 1
+
+                # Make sure we end at the end of the current span of the context
+                token_end_index = len(input_ids) - 1
+                while sequence_ids[token_end_index] != (1 if pad_on_right else 0):
+                    token_end_index -= 1
+
+                # Check for out of span
+                if not (offsets[token_start_index][0] <= start_char and offsets[token_end_index][1] >= end_char):
+                    tokenized_examples["start_positions"].append(cls_index)
+                    tokenized_examples["end_positions"].append(cls_index)
+                else:
+                    # Move the tokens until they match the start and end chars
+                    while token_start_index < len(offsets) and offsets[token_start_index][0] <= start_char:
+                        token_start_index += 1
+                    tokenized_examples["start_positions"].append(token_start_index - 1)
+                    while offsets[token_end_index][1] >= end_char:
+                        token_end_index -= 1
+                    tokenized_examples["end_positions"].append(token_end_index + 1)
+
+        return tokenized_examples
 
     if training_args.do_train:
         if not train_dataset:
@@ -338,16 +382,56 @@ def main():
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
 
         train_dataset = train_dataset.map(
-            preprocess_xsum,
+            preprocess_squad_train,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache
         )
 
-    if training_args.do_eval:
-        max_target_length = data_args.val_max_target_length
+    def preprocess_squad_eval(examples):
+        """
+        Preprocess validation examples. Similar to preprocess_squad_train but add features to retrieve spans of text
 
+        """
+        questions = examples["question"]
+        contexts = examples["context"]
+
+        # Tokenize questions and contexts together
+        tokenized_examples = tokenizer(
+            questions if pad_on_right else contexts,
+            contexts if pad_on_right else questions,
+            truncation="only_second" if pad_on_right else "only_first",  # Only truncate contexts
+            padding=padding,
+            max_length=max_length,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+            stride=data_args.doc_stride
+        )
+
+        # Map features to their corresponding examples (when splitted)
+        sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
+
+        # Examples' ids
+        tokenized_examples["example_id"] = []
+
+        for i in range(len(tokenized_examples["input_ids"])):
+            # Sequence ids (context vs. question)
+            sequence_ids = tokenized_examples.sequence_ids(i)
+            context_index = 1 if pad_on_right else 0
+
+            # Current example
+            sample_index = sample_mapping[i]
+            tokenized_examples["example_id"].append(examples["id"][sample_index])
+
+            tokenized_examples["offset_mapping"][i] = [
+                (o if sequence_ids[k] == context_index else None)
+                for k, o in enumerate(tokenized_examples["offset_mapping"][i])
+            ]
+
+        return tokenized_examples
+
+    if training_args.do_eval:
         if not eval_dataset:
             raise ValueError("No eval dataset available.")
             return
@@ -356,7 +440,7 @@ def main():
             eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
 
         eval_dataset = eval_dataset.map(
-            preprocess_xsum,
+            preprocess_squad_eval,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
@@ -364,8 +448,6 @@ def main():
         )
 
     if training_args.do_predict:
-        max_target_length = data_args.val_max_target_length
-
         if not test_dataset:
             raise ValueError("No test dataset available.")
             return
@@ -374,7 +456,7 @@ def main():
             test_dataset = test_dataset.select(range(data_args.max_test_samples))
 
         test_dataset = test_dataset.map(
-            preprocess_xsum,
+            preprocess_squad_eval,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
@@ -382,66 +464,56 @@ def main():
         )
 
     # Data collator
-    label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
     if data_args.pad_to_max_length:
         data_collator = default_data_collator
     else:
-        data_collator = DataCollatorForSeq2Seq(
+        data_collator = DataCollatorWithPadding(
             tokenizer=tokenizer,
-            model=student_model,
-            label_pad_token_id=label_pad_token_id,
             pad_to_multiple_of=8 if training_args.fp16 else None
         )
 
-    if data_args.task == "summarization":
-        metric_name = "rouge"
+    # Load metric to use in evaluation
+    if data_args.task == "question-answering":
+        metric_name = "squad_v2" if data_args.use_v2 else "squad"  # EM/F1 scores
     else:
         raise ValueError("Unsupported task.")
 
     metric = load_metric(metric_name)
 
-    def postprocess_text(preds, labels):
-        if data_args.task == "summarization":
-            preds = [pred.strip() for pred in preds]
-            labels = [label.strip() for label in labels]
+    def postprocess_squad(examples, features, predictions):
+        print(examples, features)
+        predictions = postprocess_qa_predictions(
+            examples=examples,
+            features=features,
+            predictions=predictions,
+            version_2_with_negative=data_args.use_v2,
+            n_best_size=data_args.n_best_size,
+            max_answer_length=data_args.max_answer_length,
+            null_score_diff_threshold=data_args.null_score_diff_threshold,
+            output_dir=training_args.output_dir,
+            is_world_process_zero=trainer.is_world_process_zero()
+        )
 
-            preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
-            labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
+        # Format the predictions
+        if data_args.use_v2:
+            formatted_predictions = [
+                {"id": k, "prediction_text": v, "no_answer_probability": 0.0} for k, v in predictions.items()
+            ]
         else:
-            raise ValueError("Unsupported task.")
+            formatted_predictions = [
+                {"id": k, "prediction_text": v} for k, v in predictions.items()
+            ]
 
-        return preds, labels
+        references = [
+            {"id": ex["id"], "answers": ex["answers"]} for ex in datasets["validation"]
+        ]
+
+        return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
     def compute_metrics(eval_preds):
-        preds, labels = eval_preds
-        if isinstance(preds, tuple):
-            preds = preds[0]
+        return metric.compute(predictions=eval_preds.predictions, references=eval_preds.label_ids)
 
-        # Decode predictions
-        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-
-        # Decode labels
-        if data_args.ignore_pad_token_for_loss:
-            # Replace -100 in the labels as we can't decode them.
-            labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
-        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-
-        # Some simple post-processing
-        decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
-
-        if metric_name == "rouge":
-            result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
-            # Extract a few results from ROUGE
-            result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
-        else:
-            raise ValueError("Unsupported metric.")
-
-        prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
-        result["gen_len"] = np.mean(prediction_lens)
-        result = {k: round(v, 4) for k, v in result.items()}
-        return result
-
-    # Eval steps (should be 4 times per epoch)
+    # Eval steps (should be ~4 times per epoch)
     if training_args.do_train:
         if training_args.do_eval:
             training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
@@ -451,20 +523,16 @@ def main():
             training_args.evaluation_strategy = "no"
 
     # Trainer
-    trainer = Seq2SeqKDTrainer(
+    trainer = QuestionAnsweringTrainer(
         model=student_model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
+        eval_examples=datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_metrics if training_args.predict_with_generate else None,
-        use_kd_loss=model_args.use_kd_loss,
-        teacher_model=teacher_model,
-        temperature=2.0,
-        alpha_data=model_args.alpha_data,
-        alpha_logits=model_args.alpha_logits,
-        alpha_hidden=model_args.alpha_hidden
+        post_process_function=postprocess_squad,
+        compute_metrics=compute_metrics
     )
 
     # Early-stopping callback
@@ -492,14 +560,13 @@ def main():
     if training_args.do_eval:
         logging.info("*** Evaluating ***")
 
-        metrics = trainer.evaluate(
-            max_length=max_target_length,
-            num_beams=data_args.num_beams,
-            metric_key_prefix="eval")
+        # Make predictions and metrics
+        metrics = trainer.evaluate()
 
         max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(eval_dataset)
         metrics["eval_samples"] = min(max_val_samples, len(eval_dataset))
 
+        print(metrics)
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
@@ -507,15 +574,10 @@ def main():
     if training_args.do_predict:
         logging.info("*** Testing ***")
 
-        test_results = trainer.predict(
-            test_dataset,
-            max_length=data_args.val_max_target_length,
-            num_beams=data_args.num_beams,
-            metric_key_prefix="test"
-        )
-
+        # Raw predictions
+        test_results = trainer.predict(test_dataset, metric_key_prefix="test")
         metrics = test_results.metrics
-        print(metrics)
+
         max_test_samples = data_args.max_test_samples if data_args.max_test_samples is not None else len(test_dataset)
         metrics["test_samples"] = min(max_test_samples, len(test_dataset))
 

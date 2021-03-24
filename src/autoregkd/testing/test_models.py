@@ -9,6 +9,7 @@ from transformers import (
 
 from src.autoregkd.models.custom_bart import(
     InterpolationModule,
+    InterpolationScheduler,
     DistilBartConfig,
     DistilBartDecoder,
     InterpolationDecoder,
@@ -233,6 +234,44 @@ class TestDifferentDecoder(unittest.TestCase):
         print(f'inter_std {torch.norm(self.inter.last_hidden_state)}')
         print(f'inter_tch {torch.norm(self.inter.teacher_hidden_state)}')
         print(f'distil {torch.norm(self.distil.last_hidden_state)}')
+
+class TestScheduler(unittest.TestCase):
+    def setUp(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model_name = 'a-ware/bart-squadv2'
+        # Create an interpolated decoder
+        model, _, _ = create_qa_student_by_copying_alternating_layers(
+            teacher=model_name,
+            d=3,
+            dec_interpolate=True,
+            swap_prob=0.0
+        )
+        self.inter_decoder = model.model.decoder
+        mod_1 = {'start_wu': 0, 'end_wu': 5, 'start_cd': 20, 'end_cd': 30, 'max_prob': 0.5}
+        mod_2 = {'start_wu': 5, 'end_wu': 10, 'start_cd': 20, 'end_cd': 30, 'max_prob': 0.25}
+        sch_dict = {0: mod_1, 1: mod_2}
+        self.scheduler = InterpolationScheduler(
+            self.inter_decoder.interp,
+            sch_dict,
+            40
+        )
+
+        self.inter_decoder.to(self.device)
+
+    def test_different_val(self):
+        for mod in self.inter_decoder.interp:
+            print(mod.swap_prob)
+        self.scheduler.step()
+        for mod in self.inter_decoder.interp:
+            print(mod.swap_prob)
+    
+    def test_run_scheduler(self):
+        for i in range(40):
+            out_str = f'{i + 1}| '
+            for mod in self.inter_decoder.interp:
+                out_str += f'{mod.swap_prob:.3f}, '
+            print(out_str)
+            self.scheduler.step()
 
 def run_tests():
     print('running_tests')

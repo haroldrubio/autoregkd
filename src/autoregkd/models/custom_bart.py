@@ -18,9 +18,9 @@ from re import L
 import sys
 from dataclasses import dataclass, fields
 import torch
-from typing import List, Optional
+from typing import List, Optional, Iterable, Tuple
 import torch.nn.functional as F
-from torch import nn
+from torch import nn, optim
 from torch.nn import CrossEntropyLoss
 import random
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
@@ -251,6 +251,50 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             encoder_attentions=outputs.encoder_attentions,
         )
 
+class InterpolationScheduler():
+    def __init__(
+        self,
+        modules: List[nn.Module],
+        sch_params: dict,
+        num_training_steps: int
+    ):
+        '''
+        Expect the dict to have the following format:
+        Interpolation index [int] : Scheduling dict[dict]
+        Scheduling dict has keys "start_wu", "end_wu", "start_cd", "end_cd", "max_prob"
+        '''
+        self.modules = modules
+        self.num_training_steps = num_training_steps
+        self.sch_params = sch_params
+        self.curr_step = 0
+
+
+    def step(self):
+        """
+        Performs a single optimization step.
+
+        """
+        for idx, module in enumerate(self.modules):
+            curr_dict = self.sch_params[idx]
+            start_wu, end_wu = curr_dict['start_wu'], curr_dict['end_wu']
+            start_cd, end_cd = curr_dict['start_cd'], curr_dict['end_cd']
+            max_prob = curr_dict['max_prob']
+            for p in module.parameters():
+                # Determine where in the schedule this is
+                if self.curr_step >= start_wu and self.curr_step < end_wu:
+                    # In warmup phase
+                    slope = max_prob / (end_wu - start_wu)
+                    p.data += slope
+                elif self.curr_step >= start_cd and self.curr_step < end_cd:
+                    # In cooldown phase
+                    slope = max_prob / (end_cd - start_cd)
+                    p.data -= slope
+                # Enforce: non-negativity
+                if p.data < 0:
+                    p.data *= -1
+
+        self.curr_step += 1
+
 class InterpolationModule(nn.Module):
     """
     This module contains no parameters and performs a swapping operation on the hidden unit level
@@ -259,8 +303,9 @@ class InterpolationModule(nn.Module):
     def __init__(self, swap_prob=0):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.swap_prob = torch.tensor(swap_prob, device=self.device)
-        self.register_buffer("swap_probability", self.swap_prob)
+        self.swap_prob = nn.Parameter(torch.tensor(swap_prob, device=self.device, dtype=torch.half))
+        self.swap_prob.requires_grad = False
+        self.register_parameter("swap_prob", self.swap_prob)
     def forward(self, parent_in, student_in):
         """
             Args:
@@ -330,7 +375,7 @@ class InterpolationDecoder(BartDecoder):
         self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
         # Decoder has one interpolation module per student layer minus 1
         # Since the final outputs are not interpolated
-        self.interp = nn.ModuleList([InterpolationModule(config.swap_prob) for _ in range(config.decoder_layers - 1)])
+        self.interp = nn.ModuleList([InterpolationModule(config.swap_prob) for _ in range(len(config.decoder_layer_indices) - 1)])
 
 
     def setup_interpolation(self):
