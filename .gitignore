@@ -3,6 +3,14 @@
 data
 logs
 wandb
-__pycache__/
-runs
+.idea
+src/autoregkd/archive
 *.egg-info/
+
+.lock
+
+__pycache__/
+.pytest_cache/
+
+runs
+model_outputs
