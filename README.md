@@ -19,4 +19,5 @@ You should be able to drop in the `InterpolationDecoder` directly into your mode
 
 In order to additionally compute a loss across the teacher logits, you should create a subclass of `BartFor$[TASK]` that overrides the `forward()` function, as these models compute the loss in the forward pass. See `DistilBartForQuestionAnswering` for an example
 
+If you want to use the student creation function in `distil_utils.py`, create your own version of `create_qa_student_by_copying_alternating_layers` for generation. Make a copy and replace the `AutoModelFor$[TASK]` with your specific task and `DistilBartFor$[TASK]` with your specific task.
 
