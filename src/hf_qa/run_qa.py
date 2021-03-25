@@ -21,7 +21,7 @@ Fine-tuning the library models for question answering.
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, fields
 from typing import Optional
 
 from datasets import load_dataset, load_metric
@@ -38,6 +38,10 @@ from ..autoregkd.utils.distil_utils import (
     assert_all_frozen,
     assert_not_all_frozen
 )
+from ..autoregkd.utils.training_utils import(
+    SchedulerCallback
+)
+
 from .trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -124,6 +128,27 @@ def main(model_args, data_args, training_args):
         datasets = load_dataset(extension, data_files=data_files, field="data")
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
+    
+    # Harold: handle custom args
+    sch_args = None
+    sch_callback = None
+    if model_args.dec_interpolate:
+        sch_args = {}
+        sch_callback = SchedulerCallback()
+        for idx in range(model_args.num_decoder_layers - 1):
+            # Assemble relevant arguments
+            keys = []
+            for f in fields(model_args):
+                if str(idx + 1) in f.name:
+                    keys.append(f.name)
+
+            values = [getattr(model_args, k) for k in keys]
+            keys = [k[:-2] for k in keys]
+            print(values)
+            # Check non-negativity
+            for v in values:
+                assert v >= 0, 'if interpolating, provide a schedule'
+            sch_args[idx] = {k: v for k, v in zip(keys, values)}
 
     # Load pretrained model and tokenizer
     #
@@ -155,10 +180,8 @@ def main(model_args, data_args, training_args):
     
     freeze_params(model.model.get_encoder())
     assert_all_frozen(model.model.get_encoder())
-    '''
-    freeze_params(model.model.get_decoder())
-    assert_all_frozen(model.model.get_decoder())
-    '''
+
+    # Harold: parse out args for probability scheduling
 
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):
@@ -394,6 +417,8 @@ def main(model_args, data_args, training_args):
         data_collator=data_collator,
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
+        scheduler_args=sch_args,
+        callbacks = [sch_callback]
     )
 
     # Training

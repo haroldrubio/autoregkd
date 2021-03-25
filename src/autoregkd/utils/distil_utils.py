@@ -5,7 +5,11 @@ from typing import List, Tuple, Union, Iterable, Callable
 
 from torch import nn
 
-from transformers import AutoModelForQuestionAnswering, AutoTokenizer, PreTrainedModel
+from transformers import (
+    AutoModelForQuestionAnswering,
+    AutoTokenizer,
+    PreTrainedModel,
+)
 from transformers.utils import logging
 
 from ..models.custom_bart import(

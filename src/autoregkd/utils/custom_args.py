@@ -51,11 +51,53 @@ class ModelArguments:
     num_decoder_layers: int = field(
         default=3,
         metadata={"help": "Number of decoder layers to copy"}
-    )  
+    )
+    # ----------Swap Prob Args----------
     swap_prob: float = field(
         default=0,
         metadata={"help": "When performing interpolation, set a constant swapping rate"}
     )
+    start_wu_1: float = field(
+        default=-1,
+        metadata={"help": "Percentage through to start warmup for module 1"}
+    )
+    end_wu_1: float = field(
+        default=-1,
+        metadata={"help": "Percentage through to end warmup for module 1"}
+    )
+    start_cd_1: float = field(
+        default=-1,
+        metadata={"help": "Percentage through to start cooldown for module 1"}
+    )
+    end_cd_1: float = field(
+        default=-1,
+        metadata={"help": "Percentage through to end cooldown for module 1"}
+    )
+    max_prob_1: float = field(
+        default=-1,
+        metadata={"help": "Maximum probability for module 1"}
+    )
+    start_wu_2: float = field(
+        default=-2,
+        metadata={"help": "Percentage through to start warmup for module 2"}
+    )
+    end_wu_2: float = field(
+        default=-2,
+        metadata={"help": "Percentage through to end warmup for module 2"}
+    )
+    start_cd_2: float = field(
+        default=-2,
+        metadata={"help": "Percentage through to start cooldown for module 2"}
+    )
+    end_cd_2: float = field(
+        default=-2,
+        metadata={"help": "Percentage through to end cooldown for module 2"}
+    )
+    max_prob_2: float = field(
+        default=-2,
+        metadata={"help": "Maximum probability for module 2"}
+    )
+    # ----------Swap Prob Args----------
     enc_interpolate: bool = field(
         default=False,
         metadata={

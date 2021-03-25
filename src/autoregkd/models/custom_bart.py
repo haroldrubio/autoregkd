@@ -276,8 +276,10 @@ class InterpolationScheduler():
         """
         for idx, module in enumerate(self.modules):
             curr_dict = self.sch_params[idx]
-            start_wu, end_wu = curr_dict['start_wu'], curr_dict['end_wu']
-            start_cd, end_cd = curr_dict['start_cd'], curr_dict['end_cd']
+            start_wu = int(curr_dict['start_wu']*self.num_training_steps)
+            end_wu = int(curr_dict['end_wu']*self.num_training_steps)
+            start_cd = int(curr_dict['start_cd']*self.num_training_steps)
+            end_cd = int(curr_dict['end_cd']*self.num_training_steps)
             max_prob = curr_dict['max_prob']
             for p in module.parameters():
                 # Determine where in the schedule this is
@@ -302,6 +304,7 @@ class InterpolationModule(nn.Module):
     """
     def __init__(self, swap_prob=0):
         super().__init__()
+        swap_prob = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.swap_prob = nn.Parameter(torch.tensor(swap_prob, device=self.device, dtype=torch.half))
         self.swap_prob.requires_grad = False
