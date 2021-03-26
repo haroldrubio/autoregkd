@@ -396,6 +396,8 @@ def postprocess_qa_predictions_with_beam_search(
         ]
 
     # If we have an output_dir, let's save all those dicts.
+    # Harold: avoid saving predictions to keep the hyperparameter directory clean
+    '''
     if output_dir is not None:
         assert os.path.isdir(output_dir), f"{output_dir} is not a directory."
 
@@ -420,5 +422,5 @@ def postprocess_qa_predictions_with_beam_search(
             print(f"Saving null_odds to {null_odds_file}.")
             with open(null_odds_file, "w") as writer:
                 writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
-
+    '''
     return all_predictions, scores_diff_json
