@@ -19,6 +19,7 @@ import sys
 from dataclasses import dataclass, fields
 import torch
 from typing import List, Optional, Iterable, Tuple
+from torch._C import device
 import torch.nn.functional as F
 from torch import nn, optim
 from torch.nn import CrossEntropyLoss
@@ -259,37 +260,41 @@ class InterpolationScheduler():
         num_training_steps: int
     ):
         '''
-        Expect the dict to have the following format:
-        Interpolation index [int] : Scheduling dict[dict]
-        Scheduling dict has keys "start_wu", "end_wu", "start_cd", "end_cd", "max_prob"
+        Expect the dict to have the following format: keys "max_prob", "cool_down"
         '''
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = torch.half
+
         self.modules = modules
         self.num_training_steps = num_training_steps
-        self.sch_params = sch_params
+        self.max_prob = sch_params['max_prob']
+        self.cool_down = sch_params['cool_down']
         self.curr_step = 0
+        # Decide cool down midpoints
+        self.midpoints = [float((i + 1)/(len(modules) + 1)) for i in range(len(modules))]
+        # Check validity of arguments
+        max_prob, cool_down = sch_params['max_prob'], sch_params['cool_down']
+        max_interval = 2 / (len(modules) + 1)
+        assert cool_down < max_interval, "cool_down out of training bounds"
 
 
     def step(self):
         """
         Performs a single optimization step.
-
         """
         for idx, module in enumerate(self.modules):
-            curr_dict = self.sch_params[idx]
-            start_wu = int(curr_dict['start_wu']*self.num_training_steps)
-            end_wu = int(curr_dict['end_wu']*self.num_training_steps)
-            start_cd = int(curr_dict['start_cd']*self.num_training_steps)
-            end_cd = int(curr_dict['end_cd']*self.num_training_steps)
-            max_prob = curr_dict['max_prob']
+            # Convert percentages of training to step number
+            curr_midpoint = self.midpoints[idx]
+            start_cd = int(self.num_training_steps * (curr_midpoint - (self.cool_down / 2)))
+            end_cd = int(self.num_training_steps * (curr_midpoint + (self.cool_down / 2)))
             for p in module.parameters():
                 # Determine where in the schedule this is
-                if self.curr_step >= start_wu and self.curr_step < end_wu:
-                    # In warmup phase
-                    slope = max_prob / (end_wu - start_wu)
-                    p.data += slope
-                elif self.curr_step >= start_cd and self.curr_step < end_cd:
+                if self.curr_step == start_cd:
+                    # Starting cooldown
+                    p.data = torch.tensor(self.max_prob, dtype=self.dtype, device=self.device)
+                elif self.curr_step > start_cd and self.curr_step < end_cd:
                     # In cooldown phase
-                    slope = max_prob / (end_cd - start_cd)
+                    slope = self.max_prob / (end_cd - start_cd)
                     p.data -= slope
                 # Enforce: non-negativity
                 if p.data < 0:
@@ -378,7 +383,7 @@ class InterpolationDecoder(BartDecoder):
         self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
         # Decoder has one interpolation module per student layer minus 1
         # Since the final outputs are not interpolated
-        self.interp = nn.ModuleList([InterpolationModule(config.swap_prob) for _ in range(len(config.decoder_layer_indices) - 1)])
+        self.interp = nn.ModuleList([InterpolationModule() for _ in range(len(config.decoder_layer_indices) - 1)])
 
 
     def setup_interpolation(self):

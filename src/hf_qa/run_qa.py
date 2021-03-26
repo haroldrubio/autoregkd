@@ -133,22 +133,9 @@ def main(model_args, data_args, training_args):
     sch_args = None
     sch_callback = None
     if model_args.dec_interpolate:
-        sch_args = {}
+        sch_args = {'max_prob': model_args.max_prob, 'cool_down': model_args.cool_down}
         sch_callback = SchedulerCallback()
-        for idx in range(model_args.num_decoder_layers - 1):
-            # Assemble relevant arguments
-            keys = []
-            for f in fields(model_args):
-                if str(idx + 1) in f.name:
-                    keys.append(f.name)
 
-            values = [getattr(model_args, k) for k in keys]
-            keys = [k[:-2] for k in keys]
-            print(values)
-            # Check non-negativity
-            for v in values:
-                assert v >= 0, 'if interpolating, provide a schedule'
-            sch_args[idx] = {k: v for k, v in zip(keys, values)}
 
     # Load pretrained model and tokenizer
     #
