@@ -19,7 +19,6 @@ class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
@@ -42,6 +41,12 @@ class ModelArguments:
         metadata={
             "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
             "with private models)."
+        },
+    )
+    perform_distillation: bool = field(
+        default=True,
+        metadata={
+            "help": "Use a distilled model or not"
         },
     )
     loss_type: str = field(

@@ -155,18 +155,27 @@ def main(model_args, data_args, training_args):
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    # Harold: Overwrite the above assignments to support DistilBART
-    model, _, _ = create_qa_student_by_copying_alternating_layers(
-        teacher=model_args.model_name_or_path,
-        d=model_args.num_decoder_layers,
-        dec_interpolate=model_args.dec_interpolate,
-        swap_prob=model_args.swap_prob,
-        loss_type=model_args.loss_type
-    )
-    freeze_embeds(model)
-    
-    freeze_params(model.model.get_encoder())
-    assert_all_frozen(model.model.get_encoder())
+    if not model_args.perform_distillation:
+        model = AutoModelForQuestionAnswering.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+        )
+    else:
+        # Harold: Overwrite the above assignments to support DistilBART
+        model, _, _ = create_qa_student_by_copying_alternating_layers(
+            teacher=model_args.model_name_or_path,
+            d=model_args.num_decoder_layers,
+            dec_interpolate=model_args.dec_interpolate,
+            swap_prob=model_args.swap_prob,
+            loss_type=model_args.loss_type
+        )
+        freeze_embeds(model)
+        freeze_params(model.model.get_encoder())
+        assert_all_frozen(model.model.get_encoder())
 
     # Harold: parse out args for probability scheduling
 
@@ -418,6 +427,8 @@ def main(model_args, data_args, training_args):
             checkpoint = None
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
     # Harold: Remove evaluation calls as they are incompatible with the current release version
+    if training_args.do_eval:
+        metrics = trainer.evaluate()
 
 
 def _mp_fn(index):
