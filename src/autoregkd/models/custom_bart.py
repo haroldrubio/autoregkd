@@ -291,8 +291,6 @@ class InterpolationScheduler():
             start_cd = int(self.num_training_steps * (curr_midpoint - (self.cool_down / 2)))
             end_cd = int(self.num_training_steps * (curr_midpoint + (self.cool_down / 2)))
             for p in module.parameters():
-                # Free the probability tensor
-                del p.data
                 # Determine where in the schedule this is
                 if self.curr_step == start_cd:
                     # Starting cooldown
