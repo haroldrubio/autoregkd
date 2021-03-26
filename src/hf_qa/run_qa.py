@@ -135,6 +135,7 @@ def main(model_args, data_args, training_args):
     if model_args.dec_interpolate:
         sch_args = {'max_prob': model_args.max_prob, 'cool_down': model_args.cool_down}
         sch_callback = SchedulerCallback()
+        sch_callback = [sch_callback]
 
 
     # Load pretrained model and tokenizer
@@ -414,7 +415,7 @@ def main(model_args, data_args, training_args):
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
         scheduler_args=sch_args,
-        callbacks = [sch_callback]
+        callbacks = sch_callback
     )
 
     # Training
