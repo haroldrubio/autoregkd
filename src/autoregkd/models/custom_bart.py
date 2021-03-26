@@ -263,7 +263,7 @@ class InterpolationScheduler():
         Expect the dict to have the following format: keys "max_prob", "cool_down"
         '''
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = torch.half
+        self.dtype = torch.double
 
         self.modules = modules
         self.num_training_steps = num_training_steps
@@ -311,7 +311,7 @@ class InterpolationModule(nn.Module):
         super().__init__()
         swap_prob = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.swap_prob = nn.Parameter(torch.tensor(swap_prob, device=self.device, dtype=torch.half))
+        self.swap_prob = nn.Parameter(torch.tensor(swap_prob, device=self.device, dtype=torch.double))
         self.swap_prob.requires_grad = False
         self.register_parameter("swap_prob", self.swap_prob)
     def forward(self, parent_in, student_in):
