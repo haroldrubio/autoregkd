@@ -270,6 +270,9 @@ class InterpolationScheduler():
         self.max_prob = sch_params['max_prob']
         self.cool_down = sch_params['cool_down']
         self.curr_step = 0
+        # TODO: Keep running Python float list of slopes and constantly allocate a new tensor
+        self.probs = [0, 0]
+
         # Decide cool down midpoints
         self.midpoints = [float((i + 1)/(len(modules) + 1)) for i in range(len(modules))]
         # Check validity of arguments
@@ -288,14 +291,21 @@ class InterpolationScheduler():
             start_cd = int(self.num_training_steps * (curr_midpoint - (self.cool_down / 2)))
             end_cd = int(self.num_training_steps * (curr_midpoint + (self.cool_down / 2)))
             for p in module.parameters():
+                # Free the probability tensor
+                del p.data
                 # Determine where in the schedule this is
                 if self.curr_step == start_cd:
                     # Starting cooldown
-                    p.data = torch.tensor(self.max_prob, dtype=self.dtype, device=self.device)
+                    self.probs[idx] = self.max_prob
                 elif self.curr_step > start_cd and self.curr_step < end_cd:
                     # In cooldown phase
                     slope = self.max_prob / (end_cd - start_cd)
-                    p.data -= slope
+                    self.probs[idx] -= slope
+                elif self.curr_step == end_cd:
+                    # Stop swapping
+                    self.probs[idx] = 0
+                # Write out next probability to GPU tensor
+                p.data = torch.tensor(self.probs[idx], dtype=self.dtype, device=self.device)
                 # Enforce: non-negativity
                 if p.data < 0:
                     p.data *= -1
