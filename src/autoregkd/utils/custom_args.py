@@ -83,7 +83,10 @@ class ModelArguments:
             "help": "Whether to perform interpolation on the encoder"
         },
     )
-
+    dec_interpolate_type: str = field(
+        default="interpolate",
+        metadata={"help": "Supports interpolate, interpolatev2s"},
+    )
 
 @dataclass
 class DataTrainingArguments:

@@ -129,8 +129,11 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
     def __init__(self, config: DistilBartConfig):
         super().__init__(config)
         # Handle decoder type
+        # V2s: add in interpolatev2s
         if config.decoder_type == 'interpolate':
             self.model.decoder = InterpolationDecoder(config, self.model.shared)
+        elif config.decoder_type == 'interpolatev2s':
+            self.model.decoder = InterpolationDecoderV2s(config, self.model.shared)
 
         # Handle loss type
         self.loss_type = config.loss_type
@@ -676,17 +679,16 @@ class InterpolationSchedulerV2s():
         self.modules = modules
         self.num_training_steps = num_training_steps
         self.max_prob = sch_params['max_prob']
-        self.cool_down = sch_params['cool_down']
+        self.cool_down = 1 / len(modules)
         self.curr_step = 0
         # TODO: Keep running Python float list of slopes and constantly allocate a new tensor
-        self.probs = list(np.zeros(len(modules)))
+        self.probs = list(self.max_prob * np.ones(len(modules)))
 
         # Decide cool down midpoints
-        self.midpoints = [float((i + 1)/(len(modules) + 1)) for i in range(len(modules))]
-        # Check validity of arguments
-        max_prob, cool_down = sch_params['max_prob'], sch_params['cool_down']
-        max_interval = 2 / (len(modules) + 1)
-        assert cool_down < max_interval, "cool_down out of training bounds"
+        # V2s: New setting for midpoints is completely determined
+        self.midpoints = [float((i + 1)/(len(modules)) - 0.5*self.cool_down) for i in range(len(modules))]
+        # V2s: Reverse midpoints to start adjusting outer most layer first
+        self.midpoints.reverse()
 
 
     def step(self):
@@ -718,7 +720,7 @@ class InterpolationSchedulerV2s():
 
         self.curr_step += 1
 
-class InterpolationModule(nn.Module):
+class InterpolationModuleV2s(nn.Module):
     """
     This module contains no parameters and performs a swapping operation on the hidden unit level
     between two inputs of the same shape
@@ -753,13 +755,13 @@ class InterpolationModule(nn.Module):
         staying_mask = torch.abs(swapping_mask - 1)
         del rand_tensor
 
+        # Harold v2S: only keep student_out
         # Create two output tensors
-        parent_out = staying_mask * parent_in + swapping_mask * student_in
-        student_out = staying_mask * student_in + swapping_mask * parent_in
+        out = staying_mask * student_in + swapping_mask * parent_in
 
-        return (parent_out, student_out)
+        return out
 
-class InterpolationDecoder(BartDecoder):
+class InterpolationDecoderV2s(BartDecoder):
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a :class:`BartDecoderLayer`
 
@@ -786,7 +788,8 @@ class InterpolationDecoder(BartDecoder):
         self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
         # Decoder has one interpolation module per student layer minus 1
         # Since the final outputs are not interpolated
-        self.interp = nn.ModuleList([InterpolationModule() for _ in range(len(config.decoder_layer_indices) - 1)])
+        # V2s: add in final interpolation module
+        self.interp = nn.ModuleList([InterpolationModuleV2s() for _ in range(len(config.decoder_layer_indices))])
 
 
     def setup_interpolation(self):
@@ -931,12 +934,13 @@ class InterpolationDecoder(BartDecoder):
 
                     return custom_forward
                 # Harold: if arrived at layer aligned pair - perform a student pass
+                # V2s: unified hidden state passing
                 if idx == std_parallel:
                     # Fetch student decoder layer
                     std_decoder_layer = self.std_layers[interp_idx]
                     std_layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(std_decoder_layer),
-                    std_hidden_states,
+                    hidden_states,
                     attention_mask,
                     encoder_hidden_states,
                     encoder_attention_mask,
@@ -956,11 +960,12 @@ class InterpolationDecoder(BartDecoder):
                 )
             else:
                 # Harold: Same as above for non gradient checkpoint case
+                # V2s: unified hidden state passing
                 if idx == std_parallel:
                     # Fetch student decoder layer
                     std_decoder_layer = self.std_layers[interp_idx]
                     std_layer_outputs = std_decoder_layer(
-                    std_hidden_states,
+                    hidden_states,
                     attention_mask=attention_mask,
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
@@ -995,9 +1000,10 @@ class InterpolationDecoder(BartDecoder):
                 # Check if interpolation module exists at this pairing
                 
                 if interp_idx < len(self.interp):
+                    # V2s: Adjust output expectation of the module
                     # If it does, fetch the interpolation module
                     interp_module = self.interp[interp_idx]
-                    hidden_states, std_hidden_states = interp_module(hidden_states, std_hidden_states)
+                    hidden_states = interp_module(hidden_states, std_hidden_states)
                 
                 # Step the indices
                 interp_idx += 1

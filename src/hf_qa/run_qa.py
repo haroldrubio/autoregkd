@@ -172,7 +172,8 @@ def main(model_args, data_args, training_args):
             d=model_args.num_decoder_layers,
             dec_interpolate=model_args.dec_interpolate,
             swap_prob=model_args.swap_prob,
-            loss_type=model_args.loss_type
+            loss_type=model_args.loss_type,
+            dec_interpolate_type=model_args.dec_interpolate_type
         )
         freeze_embeds(model)
         freeze_params(model.model.get_encoder())
@@ -415,7 +416,8 @@ def main(model_args, data_args, training_args):
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
         scheduler_args=sch_args,
-        callbacks = sch_callback
+        callbacks = sch_callback,
+        dec_interpolate_type=model_args.dec_interpolate_type
     )
 
     # Training

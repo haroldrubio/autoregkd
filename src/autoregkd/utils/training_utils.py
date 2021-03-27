@@ -11,7 +11,8 @@ from transformers import (
 )
 
 from ..models.custom_bart import(
-    InterpolationScheduler
+    InterpolationScheduler,
+    InterpolationSchedulerV2s
 )
 
 class SchedulerState(TrainerState):
@@ -23,11 +24,11 @@ class SchedulerCallback(TrainerCallback):
         return super().on_step_end(args, state, control, **kwargs)
 
 class DistilTrainer(Trainer):
-    def __init__(self, *args, scheduler_args=None, **kwargs):
+    def __init__(self, *args, scheduler_args=None, dec_interpolate_type=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.scheduler_args = scheduler_args
         self.prob_scheduler = None
-
+        self.dec_interpolate_type = dec_interpolate_type
     # Harold: Hack to force state to be one that can store the scheduler
     def num_examples(self, dataloader):
         if not isinstance(self.state, SchedulerState):
@@ -41,7 +42,10 @@ class DistilTrainer(Trainer):
         if self.scheduler_args is not None:
             # Fetch interpolation modules and create scheduler
             modules = self.model.model.decoder.interp
-            self.prob_scheduler = InterpolationScheduler(modules, self.scheduler_args, num_training_steps)
+            if self.dec_interpolate_type == 'interpolate':
+                self.prob_scheduler = InterpolationScheduler(modules, self.scheduler_args, num_training_steps)
+            elif self.dec_interpolate_type == 'interpolatev2s':
+                self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
             # Overwrite state
             self.state = SchedulerState()
             self.state.prob_scheduler = self.prob_scheduler
