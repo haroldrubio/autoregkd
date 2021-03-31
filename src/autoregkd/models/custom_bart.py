@@ -401,9 +401,9 @@ class InterpolationDecoder(BartDecoder):
             self.padding_idx,
         )
         self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
-        # Decoder has one interpolation module per student layer minus 1
+        # Decoder has one interpolation module per student layer minus 1 (not minus 1 now)
         # Since the final outputs are not interpolated
-        self.interp = nn.ModuleList([InterpolationModule() for _ in range(len(config.decoder_layer_indices) - 1)])
+        self.interp = nn.ModuleList([InterpolationModule() for _ in range(len(config.decoder_layer_indices))])
 
 
     def setup_interpolation(self):
