@@ -136,7 +136,7 @@ def main(model_args, data_args, training_args):
         sch_args = {'max_prob': model_args.max_prob,
                     'cool_down': model_args.cool_down,
                     'conn_time': model_args.conn_time,
-                    'reverse': model_args.reverse}
+                    'reverse_probs': model_args.reverse_probs}
         sch_callback = SchedulerCallback()
         sch_callback = [sch_callback]
 

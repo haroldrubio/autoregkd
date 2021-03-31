@@ -272,7 +272,7 @@ class InterpolationScheduler():
         num_training_steps: int
     ):
         '''
-        Expect the dict to have the following format: keys "max_prob", "cool_down"
+        Expect the dict to have the following format: keys "max_prob", "cool_down", "reverse_probs" [optional]
         '''
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.double
@@ -287,10 +287,12 @@ class InterpolationScheduler():
 
         # Decide cool down midpoints
         self.midpoints = [float((i + 1)/(len(modules) + 1)) for i in range(len(modules))]
+        if sch_params['reverse_probs']:
+            self.midpoints.reverse()
         # Check validity of arguments
         max_prob, cool_down = sch_params['max_prob'], sch_params['cool_down']
         max_interval = 2 / (len(modules) + 1)
-        assert cool_down < max_interval, "cool_down out of training bounds"
+        assert cool_down < max_interval, f"cool_down out of training bounds ({max_interval})"
 
 
     def step(self):
@@ -671,7 +673,7 @@ class InterpolationSchedulerV2s():
         num_training_steps: int
     ):
         '''
-        Expect the dict to have the following format: keys "max_prob", "conn_time"
+        Expect the dict to have the following format: keys "max_prob", "conn_time", "reverse_probs" [optional]
         '''
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.double
@@ -679,7 +681,7 @@ class InterpolationSchedulerV2s():
         self.modules = modules
         self.num_training_steps = num_training_steps
         self.max_prob = sch_params['max_prob']
-        self.cool_down = 1 / len(modules)
+        self.cool_down = 1 / len(modules) * sch_params['conn_time']
         self.curr_step = 0
         # TODO: Keep running Python float list of slopes and constantly allocate a new tensor
         self.probs = list(self.max_prob * np.ones(len(modules)))
@@ -688,7 +690,8 @@ class InterpolationSchedulerV2s():
         # V2s: New setting for midpoints is completely determined
         self.midpoints = [float((i + 1)/(len(modules)) - 0.5*self.cool_down) for i in range(len(modules))]
         # V2s: Reverse midpoints to start adjusting outer most layer first
-        self.midpoints.reverse()
+        if sch_params['reverse_probs']:
+            self.midpoints.reverse()
 
 
     def step(self):

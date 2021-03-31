@@ -3,15 +3,14 @@ command:
   - ${interpreter}
   - ${program}
   - "--dataset_name=squad_v2"
-  - "--output_dir=hyp_interloss_schv2s"
+  - "--output_dir=hyp_interloss_sch1"
   - "--model_name_or_path=Primer/bart-squad2"
   - "--tokenizer_name=facebook/bart-large"
   - "--lr_scheduler_type=linear"
   - "--num_decoder_layers=3"
   - "--dec_interpolate=true"
-  - "--dec_interpolate_type=interpolatev2s"
-  - "--reverse_probs=true"
   - "--loss_type=interpolate"
+  - "--reverse_probs=true"
   - "--learning_rate=0.00001"
   - "--warmup_steps=1000"
   - "--per_device_eval_batch_size=2"
@@ -37,6 +36,6 @@ metric:
   name: 'train/f1'
 parameters:
   max_prob:
-    values: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
-  conn_time:
-    values: [0.25, 0.5, 0.75, 0.9, 1]
+    values: [0.1, 0.25, 0.5, 0.75, 1]
+  cool_down:
+    values: [0.1, 0.2, 0.3, 0.4, 0.45, 0.48]

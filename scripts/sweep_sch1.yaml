@@ -10,6 +10,7 @@ command:
   - "--num_decoder_layers=3"
   - "--dec_interpolate=true"
   - "--loss_type=interpolate"
+  - "--reverse_probs=false"
   - "--learning_rate=0.00001"
   - "--warmup_steps=1000"
   - "--per_device_eval_batch_size=2"
@@ -37,4 +38,4 @@ parameters:
   max_prob:
     values: [0.1, 0.25, 0.5, 0.75, 1]
   cool_down:
-    values: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    values: [0.1, 0.2, 0.3, 0.4, 0.45, 0.48]
