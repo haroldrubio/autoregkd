@@ -70,6 +70,16 @@ class ModelArguments:
         default=-1,
         metadata={"help": "When performing interpolation, set the percentage of training time to be cooling down"}
     )
+    conn_time: float = field(
+        default=-1,
+        metadata={"help": "When performing interpolationv2s, shrink the cooldown intervals by this percentage"}
+    )
+    reverse_probs: bool = field(
+        default=False,
+        metadata={
+            "help": "Reverses the order of annealing"
+        },
+    )
     # ----------Swap Prob Args----------
     enc_interpolate: bool = field(
         default=False,

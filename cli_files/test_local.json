@@ -1,6 +1,6 @@
 {
   "dataset_name": "squad_v2",
-  "output_dir": "test_local",
+  "output_dir": "distil_bart_primer",
   "model_name_or_path": "Primer/bart-squad2",
   "tokenizer_name": "facebook/bart-large",
   "lr_scheduler_type": "linear",
@@ -11,9 +11,7 @@
   "per_device_train_batch_size": 4,
   "gradient_accumulation_steps": 4,
   "keep_in_memory": true,
-  "max_train_samples": 1000,
-  "max_val_samples": 100,
-  "num_train_epochs": 1,
+  "num_train_epochs": 3,
   "save_total_limit": 0,
   "save_steps": -1,
   "logging_steps": 50,

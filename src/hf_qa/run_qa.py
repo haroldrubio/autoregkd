@@ -133,7 +133,10 @@ def main(model_args, data_args, training_args):
     sch_args = None
     sch_callback = None
     if model_args.dec_interpolate:
-        sch_args = {'max_prob': model_args.max_prob, 'cool_down': model_args.cool_down}
+        sch_args = {'max_prob': model_args.max_prob,
+                    'cool_down': model_args.cool_down,
+                    'conn_time': model_args.conn_time,
+                    'reverse': model_args.reverse}
         sch_callback = SchedulerCallback()
         sch_callback = [sch_callback]
 

@@ -671,7 +671,7 @@ class InterpolationSchedulerV2s():
         num_training_steps: int
     ):
         '''
-        Expect the dict to have the following format: keys "max_prob", "cool_down"
+        Expect the dict to have the following format: keys "max_prob", "conn_time"
         '''
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.double
