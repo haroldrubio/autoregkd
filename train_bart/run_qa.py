@@ -144,8 +144,9 @@ class DataTrainingArguments:
             "value if set."
         },
     )
+    # Harold: default to SQuAD v2
     version_2_with_negative: bool = field(
-        default=False, metadata={"help": "If true, some of the examples do not have an answer."}
+        default=True, metadata={"help": "If false, revert back to SQuAD v1"}
     )
     null_score_diff_threshold: float = field(
         default=0.0,
@@ -561,7 +562,8 @@ def main():
         else:
             checkpoint = None
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        # Harold: comment out saving after training
+        # trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
         max_train_samples = (
@@ -569,9 +571,10 @@ def main():
         )
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
+        # Harold: avoid saving state to reduce save overhead
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
-        trainer.save_state()
+        # trainer.save_state()
 
     # Evaluation
     if training_args.do_eval:
@@ -596,10 +599,7 @@ def main():
         trainer.log_metrics("test", metrics)
         trainer.save_metrics("test", metrics)
 
-
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
+# Harold: remove TPU main
 
 
 if __name__ == "__main__":
