@@ -1,0 +1,5 @@
+# python 3.8.x
+
+transformers >= 4.3.2
+datasets >= 1.4.1
+pytorch >= 1.7.1 # with cuda 11
