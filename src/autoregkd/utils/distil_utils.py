@@ -5,7 +5,11 @@ from typing import List, Tuple, Union, Iterable, Callable
 
 from torch import nn
 
-from transformers import AutoModelForQuestionAnswering, AutoTokenizer, PreTrainedModel
+from transformers import (
+    AutoModelForQuestionAnswering,
+    AutoTokenizer,
+    PreTrainedModel,
+)
 from transformers.utils import logging
 
 from ..models.custom_bart import(
@@ -83,6 +87,7 @@ def create_qa_student_by_copying_alternating_layers(
     d_layers_to_copy=None,
     enc_interpolate=False,
     dec_interpolate=False,
+    dec_interpolate_type=None,
     **extra_config_kwargs
 ) -> Tuple[PreTrainedModel, List[int], List[int]]:
     """Make a student by copying alternating layers from a teacher, save it to save_path.
@@ -142,7 +147,7 @@ def create_qa_student_by_copying_alternating_layers(
     if enc_interpolate:
         init_kwargs.update({'encoder_type': 'interpolate'})
     if dec_interpolate:
-        init_kwargs.update({'decoder_type': 'interpolate'})
+        init_kwargs.update({'decoder_type': dec_interpolate_type})
 
     # Kwargs to instantiate student: teacher kwargs with updated layer numbers + **extra_config_kwargs
     init_kwargs.update(extra_config_kwargs)

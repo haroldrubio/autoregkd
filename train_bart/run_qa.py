@@ -21,33 +21,17 @@ Fine-tuning the library models for question answering.
 import logging
 import os
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field
 from typing import Optional
 
 from datasets import load_dataset, load_metric
 
 import transformers
-from ..autoregkd.models.custom_bart import (
-    DistilBart,
-    DistilBartConfig,
-)
-from ..autoregkd.utils.distil_utils import (
-    create_qa_student_by_copying_alternating_layers,
-    freeze_embeds,
-    freeze_params,
-    assert_all_frozen,
-    assert_not_all_frozen
-)
-from ..autoregkd.utils.training_utils import(
-    SchedulerCallback
-)
-
-from .trainer_qa import QuestionAnsweringTrainer
+from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
     AutoTokenizer,
-    BartModel,
     DataCollatorWithPadding,
     EvalPrediction,
     HfArgumentParser,
@@ -57,14 +41,170 @@ from transformers import (
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
-from .utils_qa import postprocess_qa_predictions
+from utils_qa import postprocess_qa_predictions
 
-# Harold: Remove version checking
+# Harold: removed check_min_version
 
 logger = logging.getLogger(__name__)
 
 
-def main(model_args, data_args, training_args):
+@dataclass
+class ModelArguments:
+    """
+    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
+    """
+
+    model_name_or_path: str = field(
+        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
+    )
+    config_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
+    )
+    tokenizer_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
+    )
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to directory to store the pretrained models downloaded from huggingface.co"},
+    )
+    model_revision: str = field(
+        default="main",
+        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
+    )
+    use_auth_token: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
+            "with private models)."
+        },
+    )
+
+
+@dataclass
+class DataTrainingArguments:
+    """
+    Arguments pertaining to what data we are going to input our model for training and eval.
+    """
+
+    dataset_name: Optional[str] = field(
+        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
+    )
+    dataset_config_name: Optional[str] = field(
+        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
+    )
+    train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
+    validation_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+    )
+    test_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "An optional input test data file to evaluate the perplexity on (a text file)."},
+    )
+    overwrite_cache: bool = field(
+        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
+    )
+    preprocessing_num_workers: Optional[int] = field(
+        default=None,
+        metadata={"help": "The number of processes to use for the preprocessing."},
+    )
+    max_seq_length: int = field(
+        default=384,
+        metadata={
+            "help": "The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    pad_to_max_length: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to pad all samples to `max_seq_length`. "
+            "If False, will pad the samples dynamically when batching to the maximum length in the batch (which can "
+            "be faster on GPU but will be slower on TPU)."
+        },
+    )
+    max_train_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of training examples to this "
+            "value if set."
+        },
+    )
+    max_val_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of validation examples to this "
+            "value if set."
+        },
+    )
+    max_test_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of test examples to this "
+            "value if set."
+        },
+    )
+    # Harold: default to SQuAD v2
+    version_2_with_negative: bool = field(
+        default=True, metadata={"help": "If false, revert back to SQuAD v1"}
+    )
+    null_score_diff_threshold: float = field(
+        default=0.0,
+        metadata={
+            "help": "The threshold used to select the null answer: if the best answer has a score that is less than "
+            "the score of the null answer minus this threshold, the null answer is selected for this example. "
+            "Only useful when `version_2_with_negative=True`."
+        },
+    )
+    doc_stride: int = field(
+        default=128,
+        metadata={"help": "When splitting up a long document into chunks, how much stride to take between chunks."},
+    )
+    n_best_size: int = field(
+        default=20,
+        metadata={"help": "The total number of n-best predictions to generate when looking for an answer."},
+    )
+    max_answer_length: int = field(
+        default=30,
+        metadata={
+            "help": "The maximum length of an answer that can be generated. This is needed because the start "
+            "and end predictions are not conditioned on one another."
+        },
+    )
+
+    def __post_init__(self):
+        if (
+            self.dataset_name is None
+            and self.train_file is None
+            and self.validation_file is None
+            and self.test_file is None
+        ):
+            raise ValueError("Need either a dataset name or a training/validation file/test_file.")
+        else:
+            if self.train_file is not None:
+                extension = self.train_file.split(".")[-1]
+                assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
+            if self.validation_file is not None:
+                extension = self.validation_file.split(".")[-1]
+                assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
+            if self.test_file is not None:
+                extension = self.test_file.split(".")[-1]
+                assert extension in ["csv", "json"], "`test_file` should be a csv or a json file."
+
+
+def main():
+    # See all possible arguments in src/transformers/training_args.py
+    # or by passing the --help flag to this script.
+    # We now keep distinct sets of args, for a cleaner separation of concerns.
+
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+        # If we pass only one argument to the script and it's the path to a json file,
+        # let's parse it to get our arguments.
+        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+    else:
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+
     # Detecting last checkpoint.
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -98,7 +238,7 @@ def main(model_args, data_args, training_args):
         transformers.utils.logging.set_verbosity_info()
         transformers.utils.logging.enable_default_handler()
         transformers.utils.logging.enable_explicit_format()
-    logger.info("Training/evaluation parameters %s", training_args)
+    logger.info(f"Training/evaluation parameters {training_args}")
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
@@ -124,22 +264,12 @@ def main(model_args, data_args, training_args):
         if data_args.validation_file is not None:
             data_files["validation"] = data_args.validation_file
             extension = data_args.validation_file.split(".")[-1]
-
+        if data_args.test_file is not None:
+            data_files["test"] = data_args.test_file
+            extension = data_args.test_file.split(".")[-1]
         datasets = load_dataset(extension, data_files=data_files, field="data")
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
-    
-    # Harold: handle custom args
-    sch_args = None
-    sch_callback = None
-    if model_args.dec_interpolate:
-        sch_args = {'max_prob': model_args.max_prob,
-                    'cool_down': model_args.cool_down,
-                    'conn_time': model_args.conn_time,
-                    'reverse_probs': model_args.reverse_probs}
-        sch_callback = SchedulerCallback()
-        sch_callback = [sch_callback]
-
 
     # Load pretrained model and tokenizer
     #
@@ -159,30 +289,14 @@ def main(model_args, data_args, training_args):
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    if not model_args.perform_distillation:
-        model = AutoModelForQuestionAnswering.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-            revision=model_args.model_revision,
-            use_auth_token=True if model_args.use_auth_token else None,
-        )
-    else:
-        # Harold: Overwrite the above assignments to support DistilBART
-        model, _, _ = create_qa_student_by_copying_alternating_layers(
-            teacher=model_args.model_name_or_path,
-            d=model_args.num_decoder_layers,
-            dec_interpolate=model_args.dec_interpolate,
-            swap_prob=model_args.swap_prob,
-            loss_type=model_args.loss_type,
-            dec_interpolate_type=model_args.dec_interpolate_type
-        )
-        freeze_embeds(model)
-        freeze_params(model.model.get_encoder())
-        assert_all_frozen(model.model.get_encoder())
-
-    # Harold: parse out args for probability scheduling
+    model = AutoModelForQuestionAnswering.from_pretrained(
+        model_args.model_name_or_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=config,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+    )
 
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):
@@ -196,8 +310,10 @@ def main(model_args, data_args, training_args):
     # Preprocessing is slighlty different for training and evaluation.
     if training_args.do_train:
         column_names = datasets["train"].column_names
-    else:
+    elif training_args.do_eval:
         column_names = datasets["validation"].column_names
+    else:
+        column_names = datasets["test"].column_names
     question_column_name = "question" if "question" in column_names else column_names[0]
     context_column_name = "context" if "context" in column_names else column_names[1]
     answer_column_name = "answers" if "answers" in column_names else column_names[2]
@@ -299,7 +415,6 @@ def main(model_args, data_args, training_args):
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
-            keep_in_memory=data_args.keep_in_memory
         )
         if data_args.max_train_samples is not None:
             # Number of samples might increase during Feature Creation, We select only specified max samples
@@ -347,27 +462,43 @@ def main(model_args, data_args, training_args):
 
         return tokenized_examples
 
-    eval_examples = datasets["validation"]
     if training_args.do_eval:
         if "validation" not in datasets:
             raise ValueError("--do_eval requires a validation dataset")
-        eval_dataset = datasets["validation"]
+        eval_examples = datasets["validation"]
         if data_args.max_val_samples is not None:
             # We will select sample from whole data
-            eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
             eval_examples = eval_examples.select(range(data_args.max_val_samples))
         # Validation Feature Creation
-        eval_dataset = eval_dataset.map(
+        eval_dataset = eval_examples.map(
             prepare_validation_features,
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
-            keep_in_memory=data_args.keep_in_memory
         )
         if data_args.max_val_samples is not None:
             # During Feature creation dataset samples might increase, we will select required samples again
             eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
+
+    if training_args.do_predict:
+        if "test" not in datasets:
+            raise ValueError("--do_predict requires a test dataset")
+        test_examples = datasets["test"]
+        if data_args.max_test_samples is not None:
+            # We will select sample from whole data
+            test_examples = test_examples.select(range(data_args.max_test_samples))
+        # Test Feature Creation
+        test_dataset = test_examples.map(
+            prepare_validation_features,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+        if data_args.max_test_samples is not None:
+            # During Feature creation dataset samples might increase, we will select required samples again
+            test_dataset = test_dataset.select(range(data_args.max_test_samples))
 
     # Data collator
     # We have already padded to max length if the corresponding flag is True, otherwise we need to pad in the data
@@ -379,7 +510,7 @@ def main(model_args, data_args, training_args):
     )
 
     # Post-processing:
-    def post_processing_function(examples, features, predictions):
+    def post_processing_function(examples, features, predictions, stage="eval"):
         # Post-processing: we match the start logits and end logits to answers in the original context.
         predictions = postprocess_qa_predictions(
             examples=examples,
@@ -391,6 +522,7 @@ def main(model_args, data_args, training_args):
             null_score_diff_threshold=data_args.null_score_diff_threshold,
             output_dir=training_args.output_dir,
             is_world_process_zero=trainer.is_world_process_zero(),
+            prefix=stage,
         )
         # Format the result to the format the metric expects.
         if data_args.version_2_with_negative:
@@ -399,6 +531,7 @@ def main(model_args, data_args, training_args):
             ]
         else:
             formatted_predictions = [{"id": k, "prediction_text": v} for k, v in predictions.items()]
+
         references = [{"id": ex["id"], "answers": ex[answer_column_name]} for ex in examples]
         return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
@@ -418,9 +551,6 @@ def main(model_args, data_args, training_args):
         data_collator=data_collator,
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
-        scheduler_args=sch_args,
-        callbacks = sch_callback,
-        dec_interpolate_type=model_args.dec_interpolate_type
     )
 
     # Training
@@ -432,14 +562,44 @@ def main(model_args, data_args, training_args):
         else:
             checkpoint = None
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
-    # Harold: Remove evaluation calls as they are incompatible with the current release version
+        # Harold: comment out saving after training
+        # trainer.save_model()  # Saves the tokenizer too for easy upload
+
+        metrics = train_result.metrics
+        max_train_samples = (
+            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+        )
+        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+
+        # Harold: avoid saving state to reduce save overhead
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        # trainer.save_state()
+
+    # Evaluation
     if training_args.do_eval:
+        logger.info("*** Evaluate ***")
         metrics = trainer.evaluate()
 
+        max_val_samples = data_args.max_val_samples if data_args.max_val_samples is not None else len(eval_dataset)
+        metrics["eval_samples"] = min(max_val_samples, len(eval_dataset))
 
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+
+    # Prediction
+    if training_args.do_predict:
+        logger.info("*** Predict ***")
+        results = trainer.predict(test_dataset, test_examples)
+        metrics = results.metrics
+
+        max_test_samples = data_args.max_test_samples if data_args.max_test_samples is not None else len(test_dataset)
+        metrics["test_samples"] = min(max_test_samples, len(test_dataset))
+
+        trainer.log_metrics("test", metrics)
+        trainer.save_metrics("test", metrics)
+
+# Harold: remove TPU main
 
 
 if __name__ == "__main__":

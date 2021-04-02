@@ -19,7 +19,6 @@ class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
@@ -44,6 +43,12 @@ class ModelArguments:
             "with private models)."
         },
     )
+    perform_distillation: bool = field(
+        default=True,
+        metadata={
+            "help": "Use a distilled model or not"
+        },
+    )
     loss_type: str = field(
         default="finetune",
         metadata={"help": "Supports finetune, interpolate"},
@@ -51,11 +56,31 @@ class ModelArguments:
     num_decoder_layers: int = field(
         default=3,
         metadata={"help": "Number of decoder layers to copy"}
-    )  
+    )
+    # ----------Swap Prob Args----------
     swap_prob: float = field(
         default=0,
         metadata={"help": "When performing interpolation, set a constant swapping rate"}
     )
+    max_prob: float = field(
+        default=-1,
+        metadata={"help": "When performing interpolation, set the maximum swapping probability"}
+    )
+    cool_down: float = field(
+        default=-1,
+        metadata={"help": "When performing interpolation, set the percentage of training time to be cooling down"}
+    )
+    conn_time: float = field(
+        default=-1,
+        metadata={"help": "When performing interpolationv2s, shrink the cooldown intervals by this percentage"}
+    )
+    reverse_probs: bool = field(
+        default=False,
+        metadata={
+            "help": "Reverses the order of annealing"
+        },
+    )
+    # ----------Swap Prob Args----------
     enc_interpolate: bool = field(
         default=False,
         metadata={
@@ -68,7 +93,10 @@ class ModelArguments:
             "help": "Whether to perform interpolation on the encoder"
         },
     )
-
+    dec_interpolate_type: str = field(
+        default="interpolate",
+        metadata={"help": "Supports interpolate, interpolatev2s"},
+    )
 
 @dataclass
 class DataTrainingArguments:

@@ -16,17 +16,14 @@
 A subclass of `Trainer` specific to Question-Answering tasks
 """
 
-from transformers import is_datasets_available, is_torch_tpu_available
+from transformers import Trainer, is_datasets_available, is_torch_tpu_available
 from transformers.trainer_utils import PredictionOutput
-import sys
 
-# Harold: overwrite trainer with custom trainer
-from ..autoregkd.utils.training_utils import DistilTrainer as Trainer
 
 if is_datasets_available():
     import datasets
 
-# Harold: Remove TPU support
+# Harold: disabled TPU support
 
 class QuestionAnsweringTrainer(Trainer):
     def __init__(self, *args, eval_examples=None, post_process_function=None, **kwargs):
@@ -59,7 +56,7 @@ class QuestionAnsweringTrainer(Trainer):
             eval_dataset.set_format(type=eval_dataset.format["type"], columns=list(eval_dataset.features.keys()))
 
         if self.post_process_function is not None and self.compute_metrics is not None:
-            # Harold: Parse logits(?)
+            # Harold: Parse logits
             start_logits = output.predictions[0]
             end_logits = output.predictions[1]
             logits = (start_logits, end_logits)
@@ -70,7 +67,7 @@ class QuestionAnsweringTrainer(Trainer):
         else:
             metrics = {}
 
-        # Harold: Remove TPU debugging line
+        # Harold: removed TPU debugging options
 
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         return metrics
@@ -99,12 +96,11 @@ class QuestionAnsweringTrainer(Trainer):
         # We might have removed columns from the dataset so we put them back.
         if isinstance(test_dataset, datasets.Dataset):
             test_dataset.set_format(type=test_dataset.format["type"], columns=list(test_dataset.features.keys()))
-
-        # Harold: Parse logits(?)
+        # Harold: Parse logits
         start_logits = output.predictions[0]
         end_logits = output.predictions[1]
         logits = (start_logits, end_logits)
-        eval_preds = self.post_process_function(test_examples, test_dataset, logits)
+        eval_preds = self.post_process_function(test_examples, test_dataset, logits, "test")
         metrics = self.compute_metrics(eval_preds)
 
         return PredictionOutput(predictions=eval_preds.predictions, label_ids=eval_preds.label_ids, metrics=metrics)

@@ -43,6 +43,7 @@ def postprocess_qa_predictions(
     """
     Post-processes the predictions of a question-answering model to convert them to answers that are substrings of the
     original contexts. This is the base postprocessing functions for models that only return start and end logits.
+
     Args:
         examples: The non-preprocessed dataset (see the main script for more information).
         features: The processed dataset (see the main script for more information).
@@ -61,6 +62,7 @@ def postprocess_qa_predictions(
             the null answer minus this threshold, the null answer is selected for this example (note that the score of
             the null answer for an example giving several features is the minimum of the scores for the null answer on
             each feature: all features must be aligned on the fact they `want` to predict a null answer).
+
             Only useful when :obj:`version_2_with_negative` is :obj:`True`.
         output_dir (:obj:`str`, `optional`):
             If provided, the dictionaries of predictions, n_best predictions (with their scores and logits) and, if
@@ -209,7 +211,30 @@ def postprocess_qa_predictions(
         ]
 
     # If we have an output_dir, let's save all those dicts.
-    # Harold: avoid saving predictions to keep the hyperparameter directory clean
+    if output_dir is not None:
+        assert os.path.isdir(output_dir), f"{output_dir} is not a directory."
+
+        prediction_file = os.path.join(
+            output_dir, "predictions.json" if prefix is None else f"{prefix}_predictions.json"
+        )
+        nbest_file = os.path.join(
+            output_dir, "nbest_predictions.json" if prefix is None else f"{prefix}_nbest_predictions.json"
+        )
+        if version_2_with_negative:
+            null_odds_file = os.path.join(
+                output_dir, "null_odds.json" if prefix is None else f"{prefix}_null_odds.json"
+            )
+
+        logger.info(f"Saving predictions to {prediction_file}.")
+        with open(prediction_file, "w") as writer:
+            writer.write(json.dumps(all_predictions, indent=4) + "\n")
+        logger.info(f"Saving nbest_preds to {nbest_file}.")
+        with open(nbest_file, "w") as writer:
+            writer.write(json.dumps(all_nbest_json, indent=4) + "\n")
+        if version_2_with_negative:
+            logger.info(f"Saving null_odds to {null_odds_file}.")
+            with open(null_odds_file, "w") as writer:
+                writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
 
     return all_predictions
 
@@ -231,6 +256,7 @@ def postprocess_qa_predictions_with_beam_search(
     Post-processes the predictions of a question-answering model with beam search to convert them to answers that are substrings of the
     original contexts. This is the postprocessing functions for models that return start and end logits, indices, as well as
     cls token predictions.
+
     Args:
         examples: The non-preprocessed dataset (see the main script for more information).
         features: The processed dataset (see the main script for more information).
@@ -373,5 +399,29 @@ def postprocess_qa_predictions_with_beam_search(
         ]
 
     # If we have an output_dir, let's save all those dicts.
-    # Harold: avoid saving predictions to keep the hyperparameter directory clean
+    if output_dir is not None:
+        assert os.path.isdir(output_dir), f"{output_dir} is not a directory."
+
+        prediction_file = os.path.join(
+            output_dir, "predictions.json" if prefix is None else f"{prefix}_predictions.json"
+        )
+        nbest_file = os.path.join(
+            output_dir, "nbest_predictions.json" if prefix is None else f"{prefix}_nbest_predictions.json"
+        )
+        if version_2_with_negative:
+            null_odds_file = os.path.join(
+                output_dir, "null_odds.json" if prefix is None else f"{prefix}_null_odds.json"
+            )
+
+        print(f"Saving predictions to {prediction_file}.")
+        with open(prediction_file, "w") as writer:
+            writer.write(json.dumps(all_predictions, indent=4) + "\n")
+        print(f"Saving nbest_preds to {nbest_file}.")
+        with open(nbest_file, "w") as writer:
+            writer.write(json.dumps(all_nbest_json, indent=4) + "\n")
+        if version_2_with_negative:
+            print(f"Saving null_odds to {null_odds_file}.")
+            with open(null_odds_file, "w") as writer:
+                writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
+
     return all_predictions, scores_diff_json

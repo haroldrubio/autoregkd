@@ -1,0 +1,41 @@
+program: run_experiment.py
+command:
+  - ${interpreter}
+  - ${program}
+  - "--dataset_name=squad_v2"
+  - "--output_dir=hyp_interloss_sch1"
+  - "--model_name_or_path=Primer/bart-squad2"
+  - "--tokenizer_name=facebook/bart-large"
+  - "--lr_scheduler_type=linear"
+  - "--num_decoder_layers=3"
+  - "--dec_interpolate=true"
+  - "--loss_type=interpolate"
+  - "--reverse_probs=true"
+  - "--learning_rate=0.00001"
+  - "--warmup_steps=1000"
+  - "--per_device_eval_batch_size=2"
+  - "--per_device_train_batch_size=4"
+  - "--gradient_accumulation_steps=4"
+  - "--keep_in_memory=true"
+  - "--num_train_epochs=3"
+  - "--eval_accumulation_steps=100"
+  - "--save_total_limit=0"
+  - "--save_steps=-1"
+  - "--logging_steps=50"
+  - "--do_train=true"
+  - "--do_eval=true"
+  - "--eval_steps=1000"
+  - "--evaluation_strategy=steps"
+  - "--fp16=true"
+  - "--version_2_with_negative=true"
+  - "--seed=42"
+  - ${args}
+method: bayes
+metric:
+  goal: maximize
+  name: 'train/f1'
+parameters:
+  max_prob:
+    values: [0.1, 0.25, 0.5, 0.75, 1]
+  cool_down:
+    values: [0.1, 0.2, 0.3, 0.4, 0.45, 0.48]
