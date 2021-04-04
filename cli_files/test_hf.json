@@ -8,10 +8,10 @@
 	"dec_interpolate_type": "interpolatev2s",
 	"max_prob": 0.5,
 	"cool_down": 0.45,
-	"reverse_probs": false,
+	"reverse_probs": true,
 	"conn_time": 0.75,
 	"interpolation_period": 0.8,
-	"plad": 0.1
+	"plad": 0.8,
 	"loss_type": "interpolate",
 	"lr_scheduler_type": "linear",
 	"learning_rate": 0.00001,

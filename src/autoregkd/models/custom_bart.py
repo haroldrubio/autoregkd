@@ -692,10 +692,10 @@ class InterpolationSchedulerPLAD():
 
         # Decide cool down midpoints
         # PLAD: Anneal using starting points
-        self.startpoints = [float((i * self.cool_down)/(len(modules) - 1)) for i in range(len(modules))]
+        self.startpoints = [float((i * (self.interpolation_period - self.cool_down))/(len(modules) - 1)) for i in range(len(modules))]
         # V2s: Reverse midpoints to start adjusting outer most layer first
         if sch_params['reverse_probs']:
-            self.midpoints.reverse()
+            self.startpoints.reverse()
 
 
     def step(self):
