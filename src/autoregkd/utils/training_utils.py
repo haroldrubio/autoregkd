@@ -12,7 +12,8 @@ from transformers import (
 
 from ..models.custom_bart import(
     InterpolationScheduler,
-    InterpolationSchedulerV2s
+    InterpolationSchedulerV2s,
+    InterpolationSchedulerPLAD
 )
 
 class SchedulerState(TrainerState):
