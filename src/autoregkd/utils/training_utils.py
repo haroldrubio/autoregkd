@@ -45,7 +45,9 @@ class DistilTrainer(Trainer):
             if self.dec_interpolate_type == 'interpolate':
                 self.prob_scheduler = InterpolationScheduler(modules, self.scheduler_args, num_training_steps)
             elif self.dec_interpolate_type == 'interpolatev2s':
-                self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
+                # PLAD: switch to PLAD scheduling
+                # self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
+                self.prob_scheduler = InterpolationSchedulerPLAD(modules, self.scheduler_args, num_training_steps)
             # Overwrite state
             self.state = SchedulerState()
             self.state.prob_scheduler = self.prob_scheduler
