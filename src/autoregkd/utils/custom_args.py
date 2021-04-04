@@ -74,6 +74,14 @@ class ModelArguments:
         default=-1,
         metadata={"help": "When performing interpolationv2s, shrink the cooldown intervals by this percentage"}
     )
+    interpolation_period: float = field(
+        default=-1,
+        metadata={"help": "When performing interpolationv2s, decide the PERCENTAGE of training time to interpolate over"}
+    )
+    plad: float = field(
+        default=-1,
+        metadata={"help": "When performing interpolationv2s, decide the per-level annealing duration as a PERCENTAGE of IP"}
+    )
     reverse_probs: bool = field(
         default=False,
         metadata={
