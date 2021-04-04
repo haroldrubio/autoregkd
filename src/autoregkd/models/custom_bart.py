@@ -665,6 +665,69 @@ class InterpolationDecoder(BartDecoder):
 # -----------Interpolation Decoder V2s-----------
 # -----------------------------------------------
 # -----------------------------------------------
+
+# ------------------------------ PLAD Scheduler ------------------------------
+class InterpolationSchedulerPLAD():
+    def __init__(
+        self,
+        modules: List[nn.Module],
+        sch_params: dict,
+        num_training_steps: int
+    ):
+        '''
+        Expect the dict to have the following format: keys "max_prob", "interpolation_period", "plad" [optional]
+        '''
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = torch.double
+
+        self.modules = modules
+        self.num_training_steps = num_training_steps
+        self.max_prob = sch_params['max_prob']
+        self.interpolation_period = sch_params['interpolation_period']
+        self.plad = sch_params['plad']
+        self.cool_down = self.plad * self.interpolation_period
+        self.curr_step = 0
+        # TODO: Keep running Python float list of slopes and constantly allocate a new tensor
+        self.probs = list(self.max_prob * np.ones(len(modules)))
+
+        # Decide cool down midpoints
+        # PLAD: Anneal using starting points
+        self.startpoints = [float((i * self.cool_down)/(len(modules) - 1)) for i in range(len(modules))]
+        # V2s: Reverse midpoints to start adjusting outer most layer first
+        if sch_params['reverse_probs']:
+            self.midpoints.reverse()
+
+
+    def step(self):
+        """
+        Performs a single optimization step.
+        """
+        for idx, module in enumerate(self.modules):
+            # Convert percentages of training to step number
+            curr_start = self.startpoints[idx]
+            start_cd = int(self.num_training_steps * curr_start)
+            end_cd = int(self.num_training_steps * (curr_start + self.plad))
+            for p in module.parameters():
+                # Determine where in the schedule this is
+                if self.curr_step == start_cd:
+                    # Starting cooldown
+                    self.probs[idx] = self.max_prob
+                elif self.curr_step > start_cd and self.curr_step < end_cd:
+                    # In cooldown phase
+                    slope = self.max_prob / (end_cd - start_cd)
+                    self.probs[idx] -= slope
+                elif self.curr_step == end_cd:
+                    # Stop swapping
+                    self.probs[idx] = 0
+                # Write out next probability to GPU tensor
+                p.data = torch.tensor(self.probs[idx], dtype=self.dtype, device=self.device)
+                # Enforce: non-negativity
+                if p.data < 0:
+                    p.data *= -1
+
+        self.curr_step += 1
+# ------------------------------ PLAD Scheduler ------------------------------
+
 class InterpolationSchedulerV2s():
     def __init__(
         self,
