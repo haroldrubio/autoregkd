@@ -1134,17 +1134,17 @@ class TheseusScheduler():
         self.modules = modules
         self.num_training_steps = num_training_steps
         self.max_prob = sch_params['max_prob']
-        self.cool_down = 1 / len(modules) * sch_params['conn_time']
+        self.cool_down = 0.75
         self.curr_step = 0
         # TODO: Keep running Python float list of slopes and constantly allocate a new tensor
-        self.probs = list(self.max_prob * np.ones(len(modules)))
+        self.probs = list(np.ones(len(modules)))
 
         # Decide cool down midpoints
-        # V2s: New setting for midpoints is completely determined
-        self.midpoints = [float((i + 1)/(len(modules)) - 0.5*self.cool_down) for i in range(len(modules))]
+        # Theseus: Start at 0
+        self.startpoints = list(np.zeros(len(modules)))
         # V2s: Reverse midpoints to start adjusting outer most layer first
         if sch_params['reverse_probs']:
-            self.midpoints.reverse()
+            self.startpoints.reverse()
 
 
     def step(self):
@@ -1153,17 +1153,14 @@ class TheseusScheduler():
         """
         for idx, module in enumerate(self.modules):
             # Convert percentages of training to step number
-            curr_midpoint = self.midpoints[idx]
-            start_cd = int(self.num_training_steps * (curr_midpoint - (self.cool_down / 2)))
-            end_cd = int(self.num_training_steps * (curr_midpoint + (self.cool_down / 2)))
+            curr_startpoint = self.startpoints[idx]
+            start_cd = curr_startpoint
+            end_cd = int(self.num_training_steps * self.cool_down)
             for p in module.parameters():
                 # Determine where in the schedule this is
-                if self.curr_step == start_cd:
-                    # Starting cooldown
-                    self.probs[idx] = self.max_prob
-                elif self.curr_step > start_cd and self.curr_step < end_cd:
+                if self.curr_step > start_cd and self.curr_step < end_cd:
                     # In cooldown phase
-                    slope = self.max_prob / (end_cd - start_cd)
+                    slope = 1 / (end_cd - start_cd)
                     self.probs[idx] -= slope
                 elif self.curr_step == end_cd:
                     # Stop swapping
@@ -1195,28 +1192,21 @@ class TheseusModule(nn.Module):
                 parent_in (torch.tensor): An input tensor from path 1
                 student_in (torch.tensor): An input tensor from path 2
             Returns:
-                (parent_out, student_out) (tuple): The interpolated hidden states
+                (hidden_out, hidden_from) (tuple:(torch.Tensor, str)): The selected hidden states and which path was selected
         """
         if self.training:
             swap_prob = self.swap_prob
         else:
             swap_prob = 0
-        # Obtain a common shape
-        common_shape = parent_in.shape
-        assert common_shape == student_in.shape
-
-        # Generate mask
-        rand_tensor = torch.rand(common_shape, device=self.device)
-        swapping_mask = torch.zeros(common_shape, device=self.device)
-        swapping_mask[rand_tensor <= swap_prob] = 1
-        staying_mask = torch.abs(swapping_mask - 1)
-        del rand_tensor
-
-        # Harold v2S: only keep student_out
-        # Create two output tensors
-        out = staying_mask * student_in + swapping_mask * parent_in
-
-        return out
+        # Coin flip to determine output
+        coin = random.random()
+        if coin <= swap_prob:
+            out = parent_in
+            state_from = 'teacher'
+        else:
+            out = student_in
+            state_from = 'student'
+        return out, state_from
 
 class TheseusDecoder(BartDecoder):
     """
@@ -1484,17 +1474,18 @@ class TheseusDecoder(BartDecoder):
         if output_hidden_states and idx == std_parallel:
             all_hidden_states += (std_hidden_states,)
 
+        # Theseus: Return theseus states first
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
             return tuple(
                 v
-                for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [hidden_states, std_hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
         # Harold: handle the parsing of last hidden states
         return DistilModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=std_hidden_states,
-            teacher_hidden_state=hidden_states,
+            last_hidden_state=hidden_states,
+            teacher_hidden_state=std_hidden_states,
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
