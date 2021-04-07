@@ -1126,7 +1126,7 @@ class TheseusScheduler():
         num_training_steps: int
     ):
         '''
-        Expect the dict to have the following format: keys "max_prob", "conn_time", "reverse_probs" [optional]
+        Global annealing schedule across all modules
         '''
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.double
@@ -1178,8 +1178,9 @@ class TheseusScheduler():
 
 class TheseusModule(nn.Module):
     """
-    This module contains no parameters and performs a swapping operation on the hidden unit level
-    between two inputs of the same shape
+    Perform swapping at the layer-level
+    Redefine swapping probability as teacher probability
+    Return path taken
     """
     def __init__(self, swap_prob=0):
         super().__init__()
@@ -1219,7 +1220,7 @@ class TheseusModule(nn.Module):
 
 class TheseusDecoder(BartDecoder):
     """
-    Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a :class:`BartDecoderLayer`
+    Decoder trained to perform distillation using Theseus compression
 
     Args:
         config: BartConfig
@@ -1245,6 +1246,7 @@ class TheseusDecoder(BartDecoder):
         # Decoder has one interpolation module per student layer minus 1
         # Since the final outputs are not interpolated
         # V2s: add in final interpolation module
+        # TODO: Theseus - add in additional module to perform selection for input to decoder
         self.interp = nn.ModuleList([InterpolationModuleV2s() for _ in range(len(config.decoder_layer_indices))])
 
 
@@ -1365,6 +1367,7 @@ class TheseusDecoder(BartDecoder):
             ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
 
         # Harold: decoder_idx counter
+        # TODO: Theseus: both use the same input + keep track of path
         std_parallel = self.decoder_layer_indices[0]
         interp_idx = 0
         for idx, decoder_layer in enumerate(self.layers):
