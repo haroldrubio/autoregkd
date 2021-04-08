@@ -134,6 +134,8 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             self.model.decoder = InterpolationDecoder(config, self.model.shared)
         elif config.decoder_type == 'interpolatev2s':
             self.model.decoder = InterpolationDecoderV2s(config, self.model.shared)
+        elif config.decoder_type == 'theseus':
+            self.model.decoder = TheseusDecoder(config, self.model.shared)
 
         # Handle loss type
         self.loss_type = config.loss_type
@@ -1206,7 +1208,7 @@ class TheseusModule(nn.Module):
         else:
             out = student_in
             state_from = 'student'
-        return out, state_from
+        return out
 
 class TheseusDecoder(BartDecoder):
     """
