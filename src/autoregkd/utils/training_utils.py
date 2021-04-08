@@ -13,7 +13,8 @@ from transformers import (
 from ..models.custom_bart import(
     InterpolationScheduler,
     InterpolationSchedulerV2s,
-    InterpolationSchedulerPLAD
+    InterpolationSchedulerPLAD,
+    TheseusScheduler
 )
 
 class SchedulerState(TrainerState):
@@ -49,6 +50,8 @@ class DistilTrainer(Trainer):
                 # PLAD: switch to PLAD scheduling
                 # self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
                 self.prob_scheduler = InterpolationSchedulerPLAD(modules, self.scheduler_args, num_training_steps)
+            elif self.dec_interpolate_type == 'theseus':
+                self.prob_scheduler = TheseusScheduler(modules, self.scheduler_args, num_training_steps)
             # Overwrite state
             self.state = SchedulerState()
             self.state.prob_scheduler = self.prob_scheduler
