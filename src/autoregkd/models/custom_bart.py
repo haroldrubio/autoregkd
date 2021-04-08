@@ -132,7 +132,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         # V2s: add in interpolatev2s
         if config.decoder_type == 'interpolate':
             self.model.decoder = InterpolationDecoder(config, self.model.shared)
-        elif config.decoder_type == 'interpolatev2s':
+        elif config.decoder_type == 'interpolatev2s' or config.decoder_type == 'plad':
             self.model.decoder = InterpolationDecoderV2s(config, self.model.shared)
         elif config.decoder_type == 'theseus':
             self.model.decoder = TheseusDecoder(config, self.model.shared)
