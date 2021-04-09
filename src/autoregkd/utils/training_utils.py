@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Tuple, Union, Iterable, Callable
 
 from torch import nn
+from torch.optim import Optimizer
 
 from transformers import (
     TrainerCallback,
@@ -18,12 +19,19 @@ from ..models.custom_bart import(
 )
 
 class SchedulerState(TrainerState):
+    dec_interpolate_type: str = None
+    model_optimizer: Optimizer = None
     prob_scheduler: InterpolationScheduler = None
 
 class SchedulerCallback(TrainerCallback):
     def on_step_end(self, args, state, control, **kwargs):
         state.prob_scheduler.step()
         return super().on_step_end(args, state, control, **kwargs)
+    def on_step_begin(self, args, state, control, **kwargs):
+        # TODO: Scale student learning rates with the V2s scheduler per step
+        # First, step the probability scheduler
+        # Then, multiply through the corresponding parameter groups
+        return super().on_step_begin(args, state, control, **kwargs)
 
 class DistilTrainer(Trainer):
     def __init__(self, *args, scheduler_args=None, dec_interpolate_type=None, **kwargs):
@@ -33,13 +41,20 @@ class DistilTrainer(Trainer):
         self.dec_interpolate_type = dec_interpolate_type
     # Harold: Hack to force state to be one that can store the scheduler
     def num_examples(self, dataloader):
-        if not isinstance(self.state, SchedulerState):
+        if not isinstance(self.state, SchedulerState) and self.scheduler_args is not None:
             self.state = SchedulerState()
             self.state.prob_scheduler = self.prob_scheduler
         return super().num_examples(dataloader)
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         super().create_optimizer_and_scheduler(num_training_steps)
+        # TODO: create parameter groups for each student BART decoder layer
+        # Each layer is stored in self.model.model.decoder.layers
+        # Name: "model.decoder.layers.i" for layer i
+
+        # For all named parameters: bin them into decoder layers, and every other ones
+        # Re-instantiate the optimizer - Replace super call with direct code and modify where necessary
+
         # Check if performing interpolation by checking scheduler_args
         if self.scheduler_args is not None:
             # Fetch interpolation modules and create scheduler
