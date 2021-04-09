@@ -402,7 +402,6 @@ class InterpolationDecoder(BartDecoder):
         self.std_embed_positions = BartLearnedPositionalEmbedding(
             config.max_position_embeddings,
             config.d_model,
-            self.padding_idx,
         )
         self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
         # Decoder has one interpolation module per student layer minus 1 (not minus 1 now)
@@ -851,7 +850,6 @@ class InterpolationDecoderV2s(BartDecoder):
         self.std_embed_positions = BartLearnedPositionalEmbedding(
             config.max_position_embeddings,
             config.d_model,
-            self.padding_idx,
         )
         self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
         # Decoder has one interpolation module per student layer minus 1
