@@ -132,6 +132,7 @@ def main(model_args, data_args, training_args):
     # Harold: handle custom args
     sch_args = None
     sch_callback = None
+    dec_interpolate = model_args.dec_interpolate_type != 'distill'
     if model_args.dec_interpolate:
         sch_args = {'max_prob': model_args.max_prob,
                     'cool_down': model_args.cool_down,

@@ -102,7 +102,7 @@ class ModelArguments:
         },
     )
     dec_interpolate_type: str = field(
-        default="interpolate",
+        default="distill",
         metadata={"help": "Supports distill, interpolate, interpolatev2s, theseus"},
     )
 
