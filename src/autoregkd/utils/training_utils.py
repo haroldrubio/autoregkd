@@ -68,6 +68,8 @@ class DistilTrainer(Trainer):
                 self.prob_scheduler = InterpolationSchedulerPLAD(modules, self.scheduler_args, num_training_steps)
             elif self.dec_interpolate_type == 'theseus':
                 self.prob_scheduler = TheseusScheduler(modules, self.scheduler_args, num_training_steps)
+            elif self.dec_interpolate_type == 'warmup':
+                pass
             # Overwrite state
             self.state = SchedulerState()
             self.state.prob_scheduler = self.prob_scheduler

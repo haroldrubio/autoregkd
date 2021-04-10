@@ -133,7 +133,7 @@ def main(model_args, data_args, training_args):
     sch_args = None
     sch_callback = None
     dec_interpolate = model_args.dec_interpolate_type != 'distill'
-    if model_args.dec_interpolate:
+    if dec_interpolate:
         sch_args = {'max_prob': model_args.max_prob,
                     'cool_down': model_args.cool_down,
                     'conn_time': model_args.conn_time,
@@ -176,7 +176,7 @@ def main(model_args, data_args, training_args):
         model, _, _ = create_qa_student_by_copying_alternating_layers(
             teacher=model_args.model_name_or_path,
             d=model_args.num_decoder_layers,
-            dec_interpolate=model_args.dec_interpolate,
+            dec_interpolate=dec_interpolate,
             swap_prob=model_args.swap_prob,
             loss_type=model_args.loss_type,
             dec_interpolate_type=model_args.dec_interpolate_type
