@@ -1127,6 +1127,7 @@ class TheseusScheduler():
     ):
         '''
         Global annealing schedule across all modules
+        Expect keys: max_prob, cool_down
         '''
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.double
@@ -1134,7 +1135,7 @@ class TheseusScheduler():
         self.modules = modules
         self.num_training_steps = num_training_steps
         self.max_prob = sch_params['max_prob']
-        self.cool_down = 0.75
+        self.cool_down = sch_params['cool_down']
         self.curr_step = 0
         # TODO: Keep running Python float list of slopes and constantly allocate a new tensor
         self.probs = list(np.ones(len(modules)))
