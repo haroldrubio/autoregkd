@@ -4,7 +4,6 @@
 	"model_name_or_path": "a-ware/bart-squadv2",
 	"tokenizer_name": "facebook/bart-large",
 	"num_decoder_layers": 3,
-	"dec_interpolate": true,
 	"dec_interpolate_type": "theseus",
 	"max_prob": 1,
 	"cool_down": 0.45,

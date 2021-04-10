@@ -130,9 +130,10 @@ def main(model_args, data_args, training_args):
     # https://huggingface.co/docs/datasets/loading_datasets.html.
     
     # Harold: handle custom args
+    no_interpolate = ['distill', 'warmup']
     sch_args = None
     sch_callback = None
-    dec_interpolate = model_args.dec_interpolate_type != 'distill'
+    dec_interpolate = model_args.dec_interpolate_type not in no_interpolate
     if dec_interpolate:
         sch_args = {'max_prob': model_args.max_prob,
                     'cool_down': model_args.cool_down,

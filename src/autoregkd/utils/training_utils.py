@@ -2,14 +2,19 @@ import warnings
 from pathlib import Path
 from typing import List, Tuple, Union, Iterable, Callable
 
+import torch
 from torch import nn
 from torch.optim import Optimizer
 
 from transformers import (
     TrainerCallback,
     TrainerState,
-    Trainer
+    Trainer,
 )
+
+from transformers.trainer_pt_utils import get_parameter_names
+from transformers.trainer_utils import ShardedDDPOption
+from transformers.optimization import Adafactor, AdamW
 
 from ..models.custom_bart import(
     InterpolationScheduler,
@@ -59,17 +64,83 @@ class DistilTrainer(Trainer):
         if self.scheduler_args is not None:
             # Fetch interpolation modules and create scheduler
             modules = self.model.model.decoder.interp
+
             if self.dec_interpolate_type == 'interpolate':
                 self.prob_scheduler = InterpolationScheduler(modules, self.scheduler_args, num_training_steps)
+
             elif self.dec_interpolate_type == 'interpolatev2s':
                 # PLAD: switch to PLAD scheduling
                 self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
+
             elif self.dec_interpolate_type == 'plad':
                 self.prob_scheduler = InterpolationSchedulerPLAD(modules, self.scheduler_args, num_training_steps)
+
             elif self.dec_interpolate_type == 'theseus':
                 self.prob_scheduler = TheseusScheduler(modules, self.scheduler_args, num_training_steps)
+
             elif self.dec_interpolate_type == 'warmup':
-                pass
+                # Progressively warmup the network
+                # Declare a scheduler
+                self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
+                decay_parameters = get_parameter_names(self.model, [torch.nn.LayerNorm])
+                decay_parameters = [name for name in decay_parameters if "bias" not in name]
+
+                # Assemble layer-wise parameter groups
+                params_at_layer = {i:[] for i in range(len(modules))}
+                decay_params_at_layer = {i:[] for i in range(len(modules))}
+                gen_params, decay_gen_params = [], []
+                for n, p in self.model.named_parameters():
+                    is_decoder_layer = False
+                    for idx in range(len(modules)):
+                        # Check if this parameter belongs to this layer
+                        compare_string = f'decoder.layers.{idx}'
+                        if compare_string in n:
+                            is_decoder_layer = True
+                            if n in decay_parameters:
+                                decay_params_at_layer[idx].append(p)
+                            else:
+                                params_at_layer[idx].append(p)
+                    # Handle general parameter
+                    if not is_decoder_layer:
+                        if n in decay_parameters:
+                            decay_gen_params.append(p)
+                        else:
+                            gen_params.append(p)
+                
+                # Assemble list of parameter groups
+                # Handle decoder layers
+                grouped_params = []
+                for idx in range(len(modules)):
+                    p_list = params_at_layer[idx]
+                    decay_p_list = decay_params_at_layer[idx]
+                    # Assemble dictionaries
+                    p_dict = {'params': p_list, 'weight_decay': 0.0}
+                    decay_p_dict = {'params': decay_p_list, 'weight_decay': self.args.weight_decay}
+
+                    grouped_params.append(p_dict)
+                    grouped_params.append(decay_p_dict)
+                    
+                # Handle general parameters
+                p_dict = {'params': gen_params, 'weight_decay': 0.0}
+                decay_p_dict = {'params': decay_gen_params, 'weight_decay': self.args.weight_decay}
+                grouped_params.append(p_dict)
+                grouped_params.append(decay_p_dict)
+
+                # Replicate HF code
+                optimizer_cls = Adafactor if self.args.adafactor else AdamW
+                if self.args.adafactor:
+                    optimizer_cls = Adafactor
+                    optimizer_kwargs = {"scale_parameter": False, "relative_step": False}
+                else:
+                    optimizer_cls = AdamW
+                    optimizer_kwargs = {
+                        "betas": (self.args.adam_beta1, self.args.adam_beta2),
+                        "eps": self.args.adam_epsilon,
+                    }
+                optimizer_kwargs["lr"] = self.args.learning_rate
+                # Harold: this approach does not support distributed training
+                self.optimizer = optimizer_cls(grouped_params, **optimizer_kwargs)
+
             # Overwrite state
             self.state = SchedulerState()
             self.state.prob_scheduler = self.prob_scheduler
