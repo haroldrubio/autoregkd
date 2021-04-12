@@ -39,7 +39,7 @@ class SchedulerCallback(TrainerCallback):
             probs = state.prob_scheduler.probs
             # Then, multiply through the corresponding parameter groups
             # Retrieve the first n groups
-            layer_groups = self.optimizer.param_groups[:len(probs)]
+            layer_groups = super().optimizer.param_groups[:len(probs)]
             # Modify the learning rates
             for idx, group in enumerate(layer_groups):
                 group['lr'] = group['lr'] * probs[idx]
