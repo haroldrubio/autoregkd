@@ -160,5 +160,8 @@ class DistilTrainer(Trainer):
             probs = self.state.prob_scheduler.probs
             for idx, prob in enumerate(probs):
                 logs[f'lr_weight_at_layer_{idx}'] = float(abs(1 - prob))
+            # Record parameter groups
+            for idx, group in enumerate(self.optimizer.param_groups):
+                logs[f'lr_at_layer_{idx}'] = group['lr']
         super().log(logs)
 
