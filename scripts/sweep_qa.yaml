@@ -1,0 +1,67 @@
+program: scripts/run_qa.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--model_type=interpolation"
+  - "--output_dir=./model_outputs/interpolation_outputs/"
+  - "--overwrite_output_dir=True"
+  - "--model_name=Primer/bart-squad2"
+  - "--tokenizer_name=Primer/bart-squad2"
+  - "--task=question-answering"
+  - "--dataset_name=squad"
+  - "--use_v2=True"
+  - "--fp16=True"
+  - "--fp16_opt_level=O1"
+  - "--gradient_accumulation_steps=8"
+  - "--freeze_embedding=True"
+  - "--freeze_encoder=True"
+  - "--freeze_qa_head=True"
+  - "--max_seq_length=384"
+  - "--doc_stride=128"
+  - "--n_best_size=20"
+  - "--max_answer_length=30"
+  - "--null_score_diff_threshold=0.0"
+  - "--per_device_train_batch_size=4"
+  - "--per_device_eval_batch_size=2"
+  - "--do_train"
+  - "--do_eval"
+  - "--num_interpolation_epochs=5"
+  - "--num_train_epochs=8"
+  - "--evaluation_strategy=steps"
+  - "--num_evals_per_epoch=4"
+  - "--save_total_limit=5"
+  - "--load_best_model_at_end=True"
+  - "--metric_for_best_model=f1"
+  - ${args}
+method: bayes
+metric:
+  goal: maximize
+  name: 'eval/f1'
+parameters:
+  seed:
+    distribution: int_uniform
+    max: 1000
+    min: 1
+  learning_rate:
+    distribution: log_uniform
+    max: -8
+    min: -12
+  interpolation_p:
+    distribution: uniform
+    max: 0.5
+    min: 0.0
+  max_prob:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  per_level_annealing_duration:
+    distribution: uniform
+    max: 0.8
+    min: 0.1
+  step_size:
+    values:
+      - 1
+      - 5
+      - 10
+      - 20

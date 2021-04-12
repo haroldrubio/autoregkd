@@ -28,10 +28,10 @@ def copy_to_student(teacher_model: BartPretrainedModel,
     student_model.load_state_dict(teacher_model.state_dict(), strict=False)
 
     # Copy the encoder's weights
-    for i, layer_idx in enumerate(config.encoder_layer_indices):
+    for i, layer_idx in enumerate(config.student_encoder_layer_indices):
         student_model.model.encoder.layers[i].load_state_dict(teacher_model.model.encoder.layers[layer_idx].state_dict())
 
     # Copy the decoder's weights
-    for i, layer_idx in enumerate(config.decoder_layer_indices):
+    for i, layer_idx in enumerate(config.student_decoder_layer_indices):
         student_model.model.decoder.layers[i].load_state_dict(teacher_model.model.decoder.layers[layer_idx].state_dict())
 

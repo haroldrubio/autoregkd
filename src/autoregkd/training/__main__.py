@@ -1,14 +1,14 @@
 import click
 
 
-def train_distilbart():
-    from .train_distilbart_seq2seq import main
+def run_seq2seq():
+    from .run_seq2seq import main
 
     main()
 
 
-def train_distilbart_qa():
-    from .train_distilbart_qa import main
+def run_qa():
+    from .run_qa import main
 
     main()
 

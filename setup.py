@@ -11,8 +11,8 @@ setup(
     entry_points={
         "console_scripts": [
             "autoregkd = autoregkd.__main__:main",
-            "train_distilbart_seq2seq = autoregkd.training.train_distilbart_seq2seq:main",
-            "train_distilbart_qa = autoregkd.training.train_distilbart_qa:main"
+            "run_seq2seq = autoregkd.training.run_seq2seq:main",
+            "run_qa = autoregkd.training.run_qa:main"
         ]
     }
 )

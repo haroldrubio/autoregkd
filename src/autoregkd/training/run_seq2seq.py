@@ -28,16 +28,19 @@ from transformers import (
     EarlyStoppingCallback,
     DataCollatorForSeq2Seq,
     default_data_collator,
-    set_seed
+    set_seed,
 )
+from transformers.trainer_utils import get_last_checkpoint, is_main_process
 
 from ..models.distilbart.configuration_distilbart import DistilBartConfig
 from ..models.distilbart.modeling_distilbart import (
     create_new_student,
     copy_to_student
 )
+from ..models.interpolation.modeling_interpolation import InterpolationBartForConditionalGeneration
 
-from .trainer_seq2seq import Seq2SeqKDTrainer
+from .trainer_seq2seq import Seq2SeqTrainer, Seq2SeqKDTrainer, Seq2SeqInterpolationTrainer
+from .utils import AddAtEpochCallback
 
 from datasets import load_dataset, load_metric
 
@@ -45,8 +48,20 @@ from datasets import load_dataset, load_metric
 with FileLock(".lock") as lock:
     nltk.download("punkt", quiet=True)
 
+os.environ['WANDB_PROJECT'] = 'interpolation_xsum'
 
 logger = logging.getLogger(__name__)
+
+
+def default_logdir() -> str:
+    """
+    Same default as PyTorch
+    """
+    import socket
+    from datetime import datetime
+
+    current_time = datetime.now().strftime("%b%d_%H-%M-%S")
+    return os.path.join("runs", "xsum", current_time + "_" + socket.gethostname())
 
 
 @dataclass
@@ -54,9 +69,11 @@ class ModelArguments:
     """
     Arguments for model
     """
-    use_hf_model: bool = field(
-        default=False,
-        metadata={"help": "Whether to use Huggingface's BART model or custom BART model"}
+    model_type: str = field(
+        default="interpolation",
+        metadata={"help": "Which type of model to use. Can choose among huggingface (HF's model for checkpoint "
+                          "evaluation), distilbart (Distilbart paper replication), "
+                          "and interpolation (Interpolation model)"}
     )
 
     model_name: str = field(
@@ -69,41 +86,91 @@ class ModelArguments:
         metadata={"help": "Name of pre-trained BART tokenizer"}
     )
 
-    encoder_layer_indices: Tuple = field(
+    student_encoder_layer_indices: Tuple = field(
         default=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
         metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
     )
 
-    decoder_layer_indices: Tuple = field(
+    student_decoder_layer_indices: Tuple = field(
         default=(0, 6, 11),
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
     )
 
-    use_kd_loss: bool = field(
+    freeze_encoder: Optional[bool] = field(
         default=True,
+        metadata={"help": "Whether to freeze the encoder. Default to True"}
+    )
+
+    freeze_embedding: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to freeze the embeddings (including token embeddings and positional embeddings). "
+                          "Default to True"}
+    )
+
+    freeze_lm_head: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to freeze the QA task-specific linear layer. Default to True"}
+    )
+
+    # ----------------------------------------- #
+    # KD-specific (Distilbart) hyper-parameters #
+    # ----------------------------------------- #
+    use_kd_loss: Optional[bool] = field(
+        default=False,
         metadata={"help": "Whether to add knowledge-distillation loss (logits and hidden loss). "
                           "If False, the loss only includes data cross-entropy loss (same as SFT approach)"}
     )
 
-    alpha_data: float = field(
+    alpha_data: Optional[float] = field(
         default=1.0,
         metadata={"help": "Weight for data loss. Default to 1.0"}
     )
 
-    alpha_logits: float = field(
+    alpha_logits: Optional[float] = field(
         default=0.0,
         metadata={"help": "Weight for logits loss. Default to 0.0 (does not contribute to the total loss)"}
     )
 
-    alpha_hidden: float = field(
+    alpha_hidden: Optional[float] = field(
         default=0.0,
         metadata={"help": "Weight for hidden state loss. Default to 0.0 (does not contribute to the total loss)"}
     )
 
-    normalize_hidden: bool = field(
+    normalize_hidden: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to normalize hidden states before computing the loss. "
                           "Only useful if use KD loss and alpha_hidden greater than 0"}
+    )
+
+    # --------------------------------------- #
+    # Interpolation-specific hyper-parameters #
+    # --------------------------------------- #
+    num_interpolation_epochs: Optional[int] = field(
+        default=5,
+        metadata={"help": "Number of interpolation epochs. Must be at most the total number of training epochs."
+                          "Default to 5"}
+    )
+
+    interpolation_p: Optional[float] = field(
+        default=0.0,
+        metadata={"help": "Starting probability for interpolation modules. Default to 0.0"}
+    )
+
+    max_prob: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "Maximum possible probability for interpolation modules. Default to 1.0"}
+    )
+
+    per_level_annealing_duration: Optional[float] = field(
+        default=0.2,
+        metadata={"help": "How long each layer's annealing duration is, measure in fraction of the number of "
+                          "interpolation steps. Default to 0.2"}
+    )
+
+    step_size: Optional[int] = field(
+        default=1,
+        metadata={"help": "How often the scheduler should update (it update every `step_size` steps). "
+                          "Default to 1"}
     )
 
 
@@ -140,7 +207,7 @@ class DatasetArguments:
     )
 
     max_target_length: Optional[int] = field(
-        default=128,
+        default=256,
         metadata={"help": "The maximum total sequence length for target text after tokenization"},
     )
 
@@ -184,6 +251,11 @@ class DatasetArguments:
         },
     )
 
+    num_evals_per_epoch: Optional[int] = field(
+        default=4,
+        metadata={"help": "Number of evaluations per epoch. Default to 4"}
+    )
+
     num_beams: Optional[int] = field(
         default=6,
         metadata={"help": "Number of beams used in beam search during evaluation and prediction steps "},
@@ -195,7 +267,6 @@ class DatasetArguments:
 
 
 def main():
-    logging.info("GPUs available: {}. Number of GPUs: {}".format(torch.cuda.is_available(), torch.cuda.device_count()))
     torch.cuda.empty_cache()
 
     parser = HfArgumentParser((ModelArguments, DatasetArguments, Seq2SeqTrainingArguments))
@@ -204,13 +275,58 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    # Enable mixed precision training on CUDA device(s)
-    if torch.cuda.is_available() and not training_args.no_cuda:
-        training_args.fp16 = True
-        logging.info("Mixed precision training enabled.")
+        # Setup logger
+        logging.basicConfig(
+            format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+            datefmt="%m/%d/%Y %H:%M:%S",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
+        logger.setLevel(logging.INFO if is_main_process(training_args.local_rank) else logging.WARN)
+
+        # Set the verbosity to info of the Transformers logger (on main process only):
+        if is_main_process(training_args.local_rank):
+            transformers.utils.logging.set_verbosity_info()
+            transformers.utils.logging.enable_default_handler()
+            transformers.utils.logging.enable_explicit_format()
+        logger.info("Training/evaluation parameters %s", training_args)
+
+    # Number of GPU(s)
+    logger.info("GPUs available: {}. Number of GPUs: {}".format(torch.cuda.is_available(), torch.cuda.device_count()))
+
+    # Enable mixed precision training on CUDA devices
+    if not torch.cuda.is_available() or training_args.no_cuda:
+        training_args.fp16 = False
+        logger.info("Mixed precision training disabled.")
+
+    # Detect and get last checkpoint
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+    if model_args.model_type == "interpolation":
+        training_args.output_dir += "minp_{}_maxp_{}_plad_{}_step_{}_seed_{}/".format(model_args.interpolation_p,
+                                                                                      model_args.max_prob,
+                                                                                      model_args.per_level_annealing_duration,
+                                                                                      model_args.step_size,
+                                                                                      training_args.seed)
 
     # Set seed for replicability
     set_seed(training_args.seed)
+
+    # Set Tensorboard logging dir
+    tensorboard_logdir = default_logdir()
+    training_args.logging_dir = tensorboard_logdir
+    logger.info("Tensorboard logged to {}".format(tensorboard_logdir))
 
     # Load dataset
     datasets = load_dataset(data_args.dataset_name)
@@ -256,50 +372,127 @@ def main():
         for param in module.parameters():
             param.requires_grad = False
 
-    if model_args.use_hf_model:
+    if model_args.model_type == "huggingface":
         # Load a pre-trained checkpoint for BART
-        config = BartConfig()
+        config = BartConfig().from_pretrained(model_args.model_name)
+        teacher_model = None
         student_model = BartForConditionalGeneration(config=config).from_pretrained(model_args.model_name).eval()
 
-    else:
+    elif model_args.model_type == "distilbart":
         # Create a DistilBart model with layers copied from the original BART model
-        # Load BART teacher model and freeze it
+        # BART teacher model
         teacher_model = BartForConditionalGeneration.from_pretrained(model_args.model_name).eval()
-        freeze_weights(teacher_model)
 
         # Extract the teacher's configuration
         teacher_config = teacher_model.config.to_diff_dict()
         teacher_config.update({
-            "encoder_layers": len(list(model_args.encoder_layer_indices)),
-            "decoder_layers": len(list(model_args.decoder_layer_indices))
+            "encoder_layers": len(list(model_args.student_encoder_layer_indices)),
+            "decoder_layers": len(list(model_args.student_decoder_layer_indices)),
         })
 
         # DistilBART configuration
         student_config = DistilBartConfig(
-            encoder_layer_indices=list(model_args.encoder_layer_indices),
-            decoder_layer_indices=list(model_args.decoder_layer_indices),
+            student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
+            student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
+            student_encoder_layers=len(list(model_args.student_encoder_layer_indices)),
+            student_decoder_layers=len(list(model_args.student_decoder_layer_indices)),
             **teacher_config
         )
 
         # DistilBART model
         student_model = create_new_student(teacher_model=teacher_model, config=student_config).eval()
 
+        assert (
+            len(student_model.model.encoder.layers) == len(list(model_args.student_encoder_layer_indices))
+            and len(student_model.model.decoder.layers) == len(list(model_args.student_decoder_layer_indices))
+        )
+
         # Copy the weights
         copy_to_student(teacher_model=teacher_model,
                         student_model=student_model,
                         config=student_config)
 
-        # Freeze the encoder's parameters
-        freeze_weights(student_model.model.encoder)
+        # Freeze shared embeddings
+        freeze_weights(student_model.model.shared)
 
         # Freeze the decoder's positional and token embeddings
+        freeze_weights(student_model.model.encoder.embed_tokens)
+        freeze_weights(student_model.model.encoder.embed_positions)
         freeze_weights(student_model.model.decoder.embed_tokens)
         freeze_weights(student_model.model.decoder.embed_positions)
 
+        # Freeze the rest of encoder's parameters
+        freeze_weights(student_model.model.get_encoder())
         encoder_trainable_params = sum(p.numel() for p in student_model.model.encoder.parameters() if p.requires_grad)
-        assert(
-            encoder_trainable_params == 0
+
+        assert (
+
+                encoder_trainable_params == 0
+
         ), "Expected the student's encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
+
+    elif model_args.model_type == "interpolation":
+        if model_args.num_interpolation_epochs > training_args.num_train_epochs:
+            model_args.num_interpolation_epochs = training_args.num_train_epochs
+            logger.info("Number of interpolation epochs exceeds number of training epochs. "
+                        "Setting number of interpolation epochs to number of training epochs")
+
+        teacher_config = BartConfig().from_pretrained(model_args.model_name).to_diff_dict()
+        student_config = DistilBartConfig(
+            student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
+            student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
+            interpolation_p=model_args.interpolation_p,
+            **teacher_config
+        )
+
+        teacher_model = None
+        student_model = InterpolationBartForConditionalGeneration(student_config)
+        student_model.from_pretrained(model_args.model_name, config=student_config)
+        student_model.load_weights_to_student()
+        student_model.freeze_weights(freeze_embedding=model_args.freeze_embedding,
+                                     freeze_encoder=model_args.freeze_encoder,
+                                     freeze_lm_head=model_args.freeze_lm_head)
+
+        encoder_trainable_params = sum(p.numel() for p in student_model.model.encoder.parameters() if p.requires_grad)
+        assert (
+                encoder_trainable_params == 0
+        ), "Expected the encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
+
+        decoder_teacher_layers = [
+            student_model.model.decoder.embed_tokens,
+            student_model.model.decoder.embed_positions,
+            student_model.model.decoder.layers,
+            student_model.model.decoder.layernorm_embedding
+        ]
+        decoder_teacher_trainable_params = sum(
+            sum(p.numel() for p in l.parameters() if p.requires_grad) for l in decoder_teacher_layers
+        )
+        assert (
+            decoder_teacher_trainable_params == 0
+        ), "Expected the teacher's decoder to be frozen. Got {} trainable parameters".format(decoder_teacher_trainable_params)
+
+        if model_args.freeze_embedding:
+            student_embedding_layers = [
+                student_model.model.decoder.student_embed_tokens,
+                student_model.model.decoder.student_embed_positions,
+                student_model.model.decoder.student_layernorm_embedding
+            ]
+            decoder_student_trainable_embed_params = sum(
+                sum(p.numel() for p in l.parameters() if p.requires_grad) for l in student_embedding_layers
+            )
+            assert (
+                decoder_student_trainable_embed_params == 0
+            ), "Expected the student's decoder's embeddings to be frozen. Got {} trainable parameters"\
+                .format(decoder_student_trainable_embed_params)
+
+        if model_args.freeze_lm_head:
+            lm_head_trainable_params = sum(p.numel() for p in student_model.lm_head.parameters() if p.requires_grad)
+            assert (
+                lm_head_trainable_params == 0
+            ), "Expected the QA head to be frozen. Got {} trainable parameters".format(lm_head_trainable_params)
+
+    else:
+        raise ValueError("Invalid model type - should be huggingface, distilbart, or interpolation")
 
     # Max lengths
     max_source_length = data_args.max_source_length
@@ -429,52 +622,86 @@ def main():
         # Some simple post-processing
         decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
 
-        if metric_name == "rouge":
-            result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
-            # Extract a few results from ROUGE
-            result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
-        else:
-            raise ValueError("Unsupported metric.")
+        # Compute ROUGE scores
+        result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
+        result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
 
         prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
         result["gen_len"] = np.mean(prediction_lens)
         result = {k: round(v, 4) for k, v in result.items()}
+
         return result
 
     # Eval steps (should be 4 times per epoch)
     if training_args.do_train:
         if training_args.do_eval:
-            training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / 4.), 1)
+            training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / data_args.num_evals_per_epoch / training_args.gradient_accumulation_steps), 1)
             training_args.logging_steps = training_args.eval_steps
             training_args.save_steps = training_args.eval_steps
+            logger.info("Evaluate every {} steps, or {} times per epoch".format(training_args.eval_steps, data_args.num_evals_per_epoch))
         else:
             training_args.evaluation_strategy = "no"
 
     # Trainer
-    trainer = Seq2SeqKDTrainer(
-        model=student_model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics if training_args.predict_with_generate else None,
-        use_kd_loss=model_args.use_kd_loss,
-        teacher_model=teacher_model,
-        temperature=2.0,
-        alpha_data=model_args.alpha_data,
-        alpha_logits=model_args.alpha_logits,
-        alpha_hidden=model_args.alpha_hidden
-    )
+    if model_args.model_type == "huggingface":
+        trainer = Seq2SeqTrainer(
+            model=student_model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            compute_metrics=compute_metrics if training_args.predict_with_generate else None
+        )
+
+    elif model_args.model_type == "distilbart":
+        trainer = Seq2SeqKDTrainer(
+            model=student_model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+            use_kd_loss=model_args.use_kd_loss,
+            teacher_model=teacher_model,
+            temperature=2.0,
+            alpha_data=model_args.alpha_data,
+            alpha_logits=model_args.alpha_logits,
+            alpha_hidden=model_args.alpha_hidden
+        )
+
+    else:
+        trainer = Seq2SeqInterpolationTrainer(
+            model=student_model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+            num_interpolation_epochs=model_args.num_interpolation_epochs,
+            max_prob=model_args.max_prob,
+            per_level_annealing_duration=model_args.per_level_annealing_duration,
+            step_size=model_args.step_size
+        )
 
     # Early-stopping callback
     early_stopping = EarlyStoppingCallback(early_stopping_patience=4)
-    trainer.add_callback(early_stopping)
+    if model_args.model_type == "huggingface" or model_args.model_type == "distilbart":
+        # Add directly to the trainer
+        trainer.add_callback(early_stopping)
+    else:
+        # For interpolation models, we only add early stopping after the interpolation period is done
+        callback = AddAtEpochCallback(trainer=trainer,
+                                      num_interpolation_epochs=model_args.num_interpolation_epochs,
+                                      callback=early_stopping)
+        trainer.add_callback(callback)
 
     # Training
     if training_args.do_train:
         logging.info("*** Training ***")
-        train_result = trainer.train()
+        train_result = trainer.train(resume_from_checkpoint=last_checkpoint)
         trainer.save_model()
 
         metrics = train_result.metrics
@@ -515,7 +742,6 @@ def main():
         )
 
         metrics = test_results.metrics
-        print(metrics)
         max_test_samples = data_args.max_test_samples if data_args.max_test_samples is not None else len(test_dataset)
         metrics["test_samples"] = min(max_test_samples, len(test_dataset))
 

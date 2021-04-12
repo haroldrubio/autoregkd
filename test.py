@@ -1,10 +1,13 @@
-from transformers import BartTokenizer, BartForConditionalGeneration, BartConfig
+from transformers import BartTokenizer, BartForConditionalGeneration, BartConfig, BartForQuestionAnswering
 from autoregkd.models.distilbart.configuration_distilbart import DistilBartConfig
 from autoregkd.models.distilbart.modeling_distilbart import *
+import torch
+import torch.nn as nn
 
 
+"""
 # BART model
-bart_model = BartForConditionalGeneration.from_pretrained('facebook/bart-large-xsum')
+bart_model = BartForQuestionAnswering.from_pretrained('facebook/bart-large-xsum')
 bart_config_dict = bart_model.config.to_diff_dict()
 
 # DistilBART model
@@ -24,26 +27,71 @@ copy_to_student(teacher_model=bart_model,
 
 tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
 
-ARTICLE_TO_SUMMARIZE = "My friends are cool but they eat too many carbs."
-inputs = tokenizer([ARTICLE_TO_SUMMARIZE], max_length=1024, return_tensors='pt')
-inputs["output_hidden_states"] = True
-# Generate Summary
-outputs = bart_model(**inputs)
-print(len(outputs.decoder_hidden_states), len(outputs.encoder_hidden_states))
 
-outputs = distilbart_model(**inputs)
-print(len(outputs.decoder_hidden_states), len(outputs.encoder_hidden_states))
+question, text = "Who was Jim Henson?", "Jim Henson was a nice puppet"
+inputs = tokenizer(question, text, return_tensors='pt')
+start_positions = torch.tensor([1])
+end_positions = torch.tensor([3])
 
+outputs = distilbart_model(**inputs, start_positions=start_positions, end_positions=end_positions, output_hidden_states=True)
+print(len(outputs.decoder_hidden_states))
+print(len(outputs.encoder_hidden_states))
+print(outputs.decoder_hidden_states[0] == outputs.encoder_hidden_states[0])
+print(inputs["input_ids"], inputs["attention_mask"])
+
+
+import torch
+from autoregkd.models.interpolation.modeling_interpolation import LinearInterpolationModule
+
+
+a = torch.ones(2, 3)
+b = 2 * torch.ones(2, 3)
+print(a)
+print(b)
+linear = LinearInterpolationModule(0.25, None)
+print(linear(a, b))
+
+bart_model = BartForQuestionAnswering.from_pretrained('Primer/bart-squad2')
+for p in bart_model.model.decoder.parameters():
+    print(p.requires_grad)
+    break
+print(len(bart_model.model.decoder.layers))
 """
-{'loss': 13.0412, 'learning_rate': 4e-05, 'epoch': 1.0}
-{'eval_loss': 9.94822883605957, 'eval_rouge1': 5.8824, 'eval_rouge2': 0.0, 'eval_rougeL': 5.8824, 'eval_rougeLsum': 5.8824, 'eval_gen_len': 62.0, 'eval_runtime': 6.2766, 'eval_samples_per_second': 0.159, 'epoch': 1.0}
-{'loss': 8.5078, 'learning_rate': 3e-05, 'epoch': 2.0}
-{'eval_loss': 8.609950065612793, 'eval_rouge1': 5.5556, 'eval_rouge2': 0.0, 'eval_rougeL': 5.5556, 'eval_rougeLsum': 5.5556, 'eval_gen_len': 62.0, 'eval_runtime': 6.2624, 'eval_samples_per_second': 0.16, 'epoch': 2.0}
-{'loss': 6.7517, 'learning_rate': 2e-05, 'epoch': 3.0}
-{'eval_loss': 7.975442409515381, 'eval_rouge1': 0.0, 'eval_rouge2': 0.0, 'eval_rougeL': 0.0, 'eval_rougeLsum': 0.0, 'eval_gen_len': 62.0, 'eval_runtime': 6.2724, 'eval_samples_per_second': 0.159, 'epoch': 3.0}
-{'loss': 5.4498, 'learning_rate': 1e-05, 'epoch': 4.0}
-{'eval_loss': 7.734518527984619, 'eval_rouge1': 0.0, 'eval_rouge2': 0.0, 'eval_rougeL': 0.0, 'eval_rougeLsum': 0.0, 'eval_gen_len': 62.0, 'eval_runtime': 6.5054, 'eval_samples_per_second': 0.154, 'epoch': 4.0}
-{'loss': 4.8699, 'learning_rate': 0.0, 'epoch': 5.0}
-{'eval_loss': 7.605877876281738, 'eval_rouge1': 2.9412, 'eval_rouge2': 0.0, 'eval_rougeL': 2.9412, 'eval_rougeLsum': 2.9412, 'eval_gen_len': 62.0, 'eval_runtime': 8.9277, 'eval_samples_per_second': 0.112, 'epoch': 5.0}
-{'train_runtime': 71.1609, 'train_samples_per_second': 0.07, 'epoch': 5.0}
-"""
+from autoregkd.models.interpolation.modeling_interpolation import LinearInterpolationModule, InterpolationScheduler
+
+class WrapperModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.interp = LinearInterpolationModule(p=0.5)
+
+    def forward(self, a, b):
+        return self.interp(a, b)
+
+
+a = torch.ones(2, 3)
+b = 2 * torch.ones(2, 3)
+model = WrapperModule()
+model.train()
+print(model(a, b))
+model.eval()
+print(model(a, b))
+model.train()
+print(model(a, b))
+
+sch = InterpolationScheduler(
+    interpolation_modules=[LinearInterpolationModule(0.) for _ in range(3)],
+    num_interpolation_steps=30,
+    max_prob=1,
+    per_level_annealing_duration=0.3,
+    step_size=5
+)
+print(sch.per_level_annealing_steps)
+print(sch.slopes)
+print(sch.starting_points)
+
+for i in range(30):
+    print("Step", i)
+    for j, m in enumerate(sch.modules):
+        print("Module {}: {}".format(j, m.p.data))
+    sch.step()
+
