@@ -19,6 +19,7 @@ from transformers.optimization import Adafactor, AdamW
 from ..models.custom_bart import(
     InterpolationScheduler,
     InterpolationSchedulerV2s,
+    LRV2s,
     InterpolationSchedulerPLAD,
     TheseusScheduler
 )
@@ -69,7 +70,10 @@ class DistilTrainer(Trainer):
         # Check if performing interpolation by checking scheduler_args
         if self.scheduler_args is not None:
             # Fetch interpolation modules and create scheduler
-            modules = self.model.model.decoder.interp
+            if self.dec_interpolate_type != 'warmup':
+                modules = self.model.model.decoder.interp
+            else:
+                modules = self.model.model.decoder.layers
 
             if self.dec_interpolate_type == 'interpolate':
                 self.prob_scheduler = InterpolationScheduler(modules, self.scheduler_args, num_training_steps)
@@ -87,7 +91,7 @@ class DistilTrainer(Trainer):
             elif self.dec_interpolate_type == 'warmup':
                 # Progressively warmup the network
                 # Declare a scheduler
-                self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
+                self.prob_scheduler = LRV2s(modules, self.scheduler_args, num_training_steps)
                 decay_parameters = get_parameter_names(self.model, [torch.nn.LayerNorm])
                 decay_parameters = [name for name in decay_parameters if "bias" not in name]
 

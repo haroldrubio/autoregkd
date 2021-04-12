@@ -729,6 +729,60 @@ class InterpolationSchedulerPLAD():
         self.curr_step += 1
 # ------------------------------ PLAD Scheduler ------------------------------
 
+# ------------------------------ Learning Rate Weights Scheduler ------------------------------
+class LRV2s():
+    def __init__(
+        self,
+        modules: List[nn.Module],
+        sch_params: dict,
+        num_training_steps: int
+    ):
+        '''
+        Expect the dict to have the following format: keys "max_prob", "conn_time", "reverse_probs" [optional]
+        '''
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = torch.double
+
+        self.modules = modules
+        self.num_training_steps = num_training_steps
+        self.max_prob = sch_params['max_prob']
+        self.cool_down = 1 / len(modules) * sch_params['conn_time']
+        self.curr_step = 0
+        # TODO: Keep running Python float list of slopes and constantly allocate a new tensor
+        self.probs = list(self.max_prob * np.ones(len(modules)))
+
+        # Decide cool down midpoints
+        # V2s: New setting for midpoints is completely determined
+        self.midpoints = [float((i + 1)/(len(modules)) - 0.5*self.cool_down) for i in range(len(modules))]
+        # V2s: Reverse midpoints to start adjusting outer most layer first
+        if sch_params['reverse_probs']:
+            self.midpoints.reverse()
+
+
+    def step(self):
+        """
+        Performs a single optimization step.
+        """
+        for idx, module in enumerate(self.modules):
+            # Convert percentages of training to step number
+            curr_midpoint = self.midpoints[idx]
+            start_cd = int(self.num_training_steps * (curr_midpoint - (self.cool_down / 2)))
+            end_cd = int(self.num_training_steps * (curr_midpoint + (self.cool_down / 2)))
+            # Determine where in the schedule this is
+            if self.curr_step == start_cd:
+                # Starting cooldown
+                self.probs[idx] = self.max_prob
+            elif self.curr_step > start_cd and self.curr_step < end_cd:
+                # In cooldown phase
+                slope = self.max_prob / (end_cd - start_cd)
+                self.probs[idx] -= slope
+            elif self.curr_step == end_cd:
+                # Stop swapping
+                self.probs[idx] = 0
+            # LR: No parameter update
+
+        self.curr_step += 1
+# ------------------------------ Learning Rate Weights Scheduler ------------------------------
 class InterpolationSchedulerV2s():
     def __init__(
         self,
@@ -786,6 +840,7 @@ class InterpolationSchedulerV2s():
                     p.data *= -1
 
         self.curr_step += 1
+
 
 class InterpolationModuleV2s(nn.Module):
     """
