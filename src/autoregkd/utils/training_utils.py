@@ -42,7 +42,7 @@ class SchedulerCallback(TrainerCallback):
             layer_groups = optimizer.param_groups[:len(probs)]
             # Modify the learning rates
             for idx, group in enumerate(layer_groups):
-                group['lr'] = group['lr'] * abs(1 - probs[idx])
+                group['lr'] = optimizer.defaults['lr'] * abs(1 - probs[idx])
         return super().on_step_begin(args, state, control, **kwargs)
 
 class DistilTrainer(Trainer):
