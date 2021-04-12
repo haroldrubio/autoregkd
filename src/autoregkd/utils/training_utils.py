@@ -33,13 +33,13 @@ class SchedulerCallback(TrainerCallback):
     def on_step_end(self, args, state, control, **kwargs):
         state.prob_scheduler.step()
         return super().on_step_end(args, state, control, **kwargs)
-    def on_step_begin(self, args, state, control, **kwargs):
+    def on_step_begin(self, args, state, control, optimizer=None, **kwargs):
         if state.dec_interpolate_type == 'warmup':
             # First, retrieve the probabilities
             probs = state.prob_scheduler.probs
             # Then, multiply through the corresponding parameter groups
             # Retrieve the first n groups
-            layer_groups = super().optimizer.param_groups[:len(probs)]
+            layer_groups = optimizer.param_groups[:len(probs)]
             # Modify the learning rates
             for idx, group in enumerate(layer_groups):
                 group['lr'] = group['lr'] * probs[idx]
