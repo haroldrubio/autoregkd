@@ -34,8 +34,14 @@ class SchedulerCallback(TrainerCallback):
         return super().on_step_end(args, state, control, **kwargs)
     def on_step_begin(self, args, state, control, **kwargs):
         # TODO: Scale student learning rates with the V2s scheduler per step
-        # First, step the probability scheduler
+        # First, retrieve the probabilities
+        probs = state.prob_scheduler.probs
         # Then, multiply through the corresponding parameter groups
+        # Retrieve the first n groups
+        layer_groups = self.optimizer.param_groups[:len(probs)]
+        # Modify the learning rates
+        for idx, group in enumerate(layer_groups):
+            group['lr'] = group['lr'] * probs[idx]
         return super().on_step_begin(args, state, control, **kwargs)
 
 class DistilTrainer(Trainer):
@@ -86,8 +92,8 @@ class DistilTrainer(Trainer):
                 decay_parameters = [name for name in decay_parameters if "bias" not in name]
 
                 # Assemble layer-wise parameter groups
+                # Only group by decoder layer - no need to group by weight decay
                 params_at_layer = {i:[] for i in range(len(modules))}
-                decay_params_at_layer = {i:[] for i in range(len(modules))}
                 gen_params, decay_gen_params = [], []
                 for n, p in self.model.named_parameters():
                     is_decoder_layer = False
@@ -96,10 +102,7 @@ class DistilTrainer(Trainer):
                         compare_string = f'decoder.layers.{idx}'
                         if compare_string in n:
                             is_decoder_layer = True
-                            if n in decay_parameters:
-                                decay_params_at_layer[idx].append(p)
-                            else:
-                                params_at_layer[idx].append(p)
+                            params_at_layer[idx].append(p)
                     # Handle general parameter
                     if not is_decoder_layer:
                         if n in decay_parameters:
@@ -112,13 +115,9 @@ class DistilTrainer(Trainer):
                 grouped_params = []
                 for idx in range(len(modules)):
                     p_list = params_at_layer[idx]
-                    decay_p_list = decay_params_at_layer[idx]
                     # Assemble dictionaries
-                    p_dict = {'params': p_list, 'weight_decay': 0.0}
-                    decay_p_dict = {'params': decay_p_list, 'weight_decay': self.args.weight_decay}
-
+                    p_dict = {'params': p_list, 'weight_decay': self.args.weight_decay}
                     grouped_params.append(p_dict)
-                    grouped_params.append(decay_p_dict)
                     
                 # Handle general parameters
                 p_dict = {'params': gen_params, 'weight_decay': 0.0}

@@ -21,6 +21,7 @@ Fine-tuning the library models for question answering.
 import logging
 import os
 import sys
+import torch
 from dataclasses import dataclass, fields
 from typing import Optional
 
@@ -426,6 +427,7 @@ def main(model_args, data_args, training_args):
         callbacks = sch_callback,
         dec_interpolate_type=model_args.dec_interpolate_type
     )
+
 
     # Training
     if training_args.do_train:

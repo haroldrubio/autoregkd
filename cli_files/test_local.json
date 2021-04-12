@@ -1,10 +1,10 @@
 {
   "dataset_name": "squad_v2",
-  "output_dir": "distil_bart_primer",
-  "model_name_or_path": "Primer/bart-squad2",
+  "output_dir": "bart_test",
+  "model_name_or_path": "facebook/bart-large",
   "tokenizer_name": "facebook/bart-large",
   "lr_scheduler_type": "linear",
-  "num_decoder_layers": 3,
+  "perform_distillation": false,
   "learning_rate": 0.00001,
   "warmup_steps": 1000,
   "per_device_eval_batch_size": 2,
@@ -17,8 +17,7 @@
   "logging_steps": 50,
   "do_train": true,
   "do_eval": true,
-  "eval_steps": 1,
-  "evaluation_strategy": "steps",
+  "evaluation_strategy": "epoch",
   "fp16": true,
   "version_2_with_negative": true,
   "seed": 42
