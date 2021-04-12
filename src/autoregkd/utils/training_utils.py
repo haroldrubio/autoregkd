@@ -155,5 +155,10 @@ class DistilTrainer(Trainer):
             modules = self.model.model.decoder.interp
             for idx, mod in enumerate(modules):
                 logs[f'swap_prob_{idx}'] = float(mod.swap_prob)
+        if self.dec_interpolate_type == 'warmup':
+            # Record the scheduler itself
+            probs = self.state.prob_scheduler.probs
+            for idx, prob in enumerate(probs):
+                logs[f'lr_weight_at_layer_{idx}'] = float(abs(1 - prob))
         super().log(logs)
 

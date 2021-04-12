@@ -8,7 +8,8 @@ command:
   - "--tokenizer_name=facebook/bart-large"
   - "--lr_scheduler_type=linear"
   - "--num_decoder_layers=3"
-  - "--dec_interpolate_type=theseus"
+  - "--dec_interpolate_type=warmup"
+  - "--conn_time=1"
   - "--reverse_probs=true"
   - "--loss_type=interpolate"
   - "--learning_rate=0.00001"
@@ -35,7 +36,7 @@ metric:
   goal: maximize
   name: 'train/f1'
 parameters:
-  cool_down:
+  max_prob:
     distribution: uniform
     min: 0
     max: 1
