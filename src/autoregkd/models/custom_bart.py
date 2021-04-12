@@ -1237,7 +1237,7 @@ class TheseusDecoder(BartDecoder):
         # Since the final outputs are not interpolated
         # V2s: add in final interpolation module
         # TODO: Theseus - add in additional module to perform selection for input to decoder
-        self.interp = nn.ModuleList([InterpolationModuleV2s() for _ in range(len(config.decoder_layer_indices))])
+        self.interp = nn.ModuleList([TheseusModule() for _ in range(len(config.decoder_layer_indices))])
 
 
     def setup_interpolation(self):
