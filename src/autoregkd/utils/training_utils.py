@@ -150,7 +150,7 @@ class DistilTrainer(Trainer):
             self.state.prob_scheduler = self.prob_scheduler
     
     def log(self, logs):
-        if self.scheduler_args is not None:
+        if self.scheduler_args is not None and self.dec_interpolate_type != 'warmup':
             # Record swapping probabilities
             modules = self.model.model.decoder.interp
             for idx, mod in enumerate(modules):
