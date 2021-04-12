@@ -34,7 +34,7 @@ class SchedulerCallback(TrainerCallback):
         state.prob_scheduler.step()
         return super().on_step_end(args, state, control, **kwargs)
     def on_step_begin(self, args, state, control, **kwargs):
-        if self.dec_interpolate_type == 'warmup':
+        if state.dec_interpolate_type == 'warmup':
             # First, retrieve the probabilities
             probs = state.prob_scheduler.probs
             # Then, multiply through the corresponding parameter groups
@@ -55,6 +55,7 @@ class DistilTrainer(Trainer):
     def num_examples(self, dataloader):
         if not isinstance(self.state, SchedulerState) and self.scheduler_args is not None:
             self.state = SchedulerState()
+            self.state.dec_interpolate_type = self.dec_interpolate_type
             self.state.prob_scheduler = self.prob_scheduler
         return super().num_examples(dataloader)
 
