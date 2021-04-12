@@ -33,15 +33,15 @@ class SchedulerCallback(TrainerCallback):
         state.prob_scheduler.step()
         return super().on_step_end(args, state, control, **kwargs)
     def on_step_begin(self, args, state, control, **kwargs):
-        # TODO: Scale student learning rates with the V2s scheduler per step
-        # First, retrieve the probabilities
-        probs = state.prob_scheduler.probs
-        # Then, multiply through the corresponding parameter groups
-        # Retrieve the first n groups
-        layer_groups = self.optimizer.param_groups[:len(probs)]
-        # Modify the learning rates
-        for idx, group in enumerate(layer_groups):
-            group['lr'] = group['lr'] * probs[idx]
+        if self.dec_interpolate_type == 'warmup':
+            # First, retrieve the probabilities
+            probs = state.prob_scheduler.probs
+            # Then, multiply through the corresponding parameter groups
+            # Retrieve the first n groups
+            layer_groups = self.optimizer.param_groups[:len(probs)]
+            # Modify the learning rates
+            for idx, group in enumerate(layer_groups):
+                group['lr'] = group['lr'] * probs[idx]
         return super().on_step_begin(args, state, control, **kwargs)
 
 class DistilTrainer(Trainer):
