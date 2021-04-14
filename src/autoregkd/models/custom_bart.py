@@ -1762,7 +1762,7 @@ class AttentionDecoder(BartDecoder):
         self.interp = nn.ModuleList([InterpolationModuleV2s() for _ in range(len(config.decoder_layer_indices))])
         # Attention: initialize history attention
         self.history_attention = HistoryAttention(
-            self.embed_dim,
+            config.d_model,
             1,
             dropout=config.attention_dropout,
             is_decoder=True,
