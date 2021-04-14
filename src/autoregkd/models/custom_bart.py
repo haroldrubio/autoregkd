@@ -136,6 +136,8 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             self.model.decoder = InterpolationDecoderV2s(config, self.model.shared)
         elif config.decoder_type == 'theseus':
             self.model.decoder = TheseusDecoder(config, self.model.shared)
+        elif config.decoder_type == 'attention-last' or config.decoder_type == 'attention-mean':
+            self.model.decoder = AttentionDecoder(config, self.model.shared)
 
         # Handle loss type
         self.loss_type = config.loss_type
@@ -1565,6 +1567,7 @@ class HistoryAttention(nn.Module):
         dropout: float = 0.0,
         is_decoder: bool = False,
         bias: bool = True,
+        decoder_type: str = None
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -1576,6 +1579,7 @@ class HistoryAttention(nn.Module):
         ), f"embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`: {num_heads})."
         self.scaling = self.head_dim ** -0.5
         self.is_decoder = is_decoder
+        self.decoder_type = decoder_type
 
         # Harold: trim attention parameters
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
@@ -1733,7 +1737,7 @@ class HistoryAttention(nn.Module):
 class AttentionDecoder(BartDecoder):
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a :class:`BartDecoderLayer`
-
+    This decoder uses attention over previous 
     Args:
         config: BartConfig
         embed_tokens (torch.nn.Embedding): output embedding
