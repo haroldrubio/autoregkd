@@ -136,7 +136,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             self.model.decoder = InterpolationDecoderV2s(config, self.model.shared)
         elif config.decoder_type == 'theseus':
             self.model.decoder = TheseusDecoder(config, self.model.shared)
-        elif config.decoder_type == 'attention-last' or config.decoder_type == 'attention-mean':
+        elif 'attention' in config.decoder_type:
             self.model.decoder = AttentionDecoder(config, self.model.shared)
 
         # Handle loss type
