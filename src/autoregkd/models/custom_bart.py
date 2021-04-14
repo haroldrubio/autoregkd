@@ -1817,7 +1817,7 @@ class AttentionDecoder(BartDecoder):
         inputs_embeds=None,
         use_cache=None,
         output_attentions=None,
-        output_hidden_states=True,
+        output_hidden_states=None,
         return_dict=None,
     ):  
 
@@ -1825,6 +1825,8 @@ class AttentionDecoder(BartDecoder):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
+        # Attention: directly override output_hidden_states
+        output_hidden_states = True
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1987,7 +1989,6 @@ class AttentionDecoder(BartDecoder):
                     # If it does, fetch the interpolation module
                     interp_module = self.interp[interp_idx]
                     # Attention: first obtain an attended teacher state, then interpolate
-                    print(all_hidden_states)
                     source_states = self.history_attention(all_hidden_states)
                     hidden_states = interp_module(source_states, std_hidden_states)
                 
