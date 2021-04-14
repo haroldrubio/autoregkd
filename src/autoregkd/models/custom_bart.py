@@ -1551,3 +1551,436 @@ class TheseusDecoder(BartDecoder):
 # ----------------Theseus Decoder----------------
 # -----------------------------------------------
 # -----------------------------------------------
+
+# -----------------------------------------------
+# -----------------------------------------------
+# ---------------Attention Decoder---------------
+# -----------------------------------------------
+# -----------------------------------------------
+class HistoryAttention(nn.Module):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        dropout: float = 0.0,
+        is_decoder: bool = False,
+        bias: bool = True,
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.dropout = dropout
+        self.head_dim = embed_dim // num_heads
+        assert (
+            self.head_dim * num_heads == self.embed_dim
+        ), f"embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`: {num_heads})."
+        self.scaling = self.head_dim ** -0.5
+        self.is_decoder = is_decoder
+
+        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+
+    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        key_value_states: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        layer_head_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        """Input shape: Batch x Time x Channel"""
+
+        # if key_value_states are provided this layer is used as a cross-attention layer
+        # for the decoder
+        is_cross_attention = key_value_states is not None
+        bsz, tgt_len, embed_dim = hidden_states.size()
+
+        # get query proj
+        query_states = self.q_proj(hidden_states) * self.scaling
+        # get key, value proj
+        if is_cross_attention and past_key_value is not None:
+            # reuse k,v, cross_attentions
+            key_states = past_key_value[0]
+            value_states = past_key_value[1]
+        elif is_cross_attention:
+            # cross_attentions
+            key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
+            value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
+        elif past_key_value is not None:
+            # reuse k, v, self_attention
+            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
+            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            key_states = torch.cat([past_key_value[0], key_states], dim=2)
+            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+        else:
+            # self_attention
+            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
+            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+
+        if self.is_decoder:
+            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
+            # Further calls to cross_attention layer can then reuse all cross-attention
+            # key/value_states (first "if" case)
+            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
+            # all previous decoder key/value_states. Further calls to uni-directional self-attention
+            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
+            # if encoder bi-directional self-attention `past_key_value` is always `None`
+            past_key_value = (key_states, value_states)
+
+        # Harold: overwrite value states with the original hidden states
+        value_states = hidden_states
+
+        proj_shape = (bsz * self.num_heads, -1, self.head_dim)
+        query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
+        key_states = key_states.view(*proj_shape)
+        value_states = value_states.view(*proj_shape)
+
+        src_len = key_states.size(1)
+        attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
+
+        assert attn_weights.size() == (
+            bsz * self.num_heads,
+            tgt_len,
+            src_len,
+        ), f"Attention weights should be of size {(bsz * self.num_heads, tgt_len, src_len)}, but is {attn_weights.size()}"
+
+        if attention_mask is not None:
+            assert attention_mask.size() == (
+                bsz,
+                1,
+                tgt_len,
+                src_len,
+            ), f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
+            attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
+            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        attn_weights = F.softmax(attn_weights, dim=-1)
+
+        if layer_head_mask is not None:
+            assert layer_head_mask.size() == (
+                self.num_heads,
+            ), f"Head mask for a single layer should be of size {(self.num_heads,)}, but is {layer_head_mask.size()}"
+            attn_weights = layer_head_mask.view(1, -1, 1, 1) * attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        if output_attentions:
+            # this operation is a bit akward, but it's required to
+            # make sure that attn_weights keeps its gradient.
+            # In order to do so, attn_weights have to reshaped
+            # twice and have to be reused in the following
+            attn_weights_reshaped = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+            attn_weights = attn_weights_reshaped.view(bsz * self.num_heads, tgt_len, src_len)
+        else:
+            attn_weights_reshaped = None
+
+        attn_probs = F.dropout(attn_weights, p=self.dropout, training=self.training)
+
+        attn_output = torch.bmm(attn_probs, value_states)
+
+        assert attn_output.size() == (
+            bsz * self.num_heads,
+            tgt_len,
+            self.head_dim,
+        ), f"`attn_output` should be of size {(bsz, self.num_heads, tgt_len, self.head_dim)}, but is {attn_output.size()}"
+
+        attn_output = (
+            attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
+            .transpose(1, 2)
+            .reshape(bsz, tgt_len, embed_dim)
+        )
+
+        attn_output = self.out_proj(attn_output)
+
+        return attn_output, attn_weights_reshaped, past_key_value
+class AttentionDecoder(BartDecoder):
+    """
+    Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a :class:`BartDecoderLayer`
+
+    Args:
+        config: BartConfig
+        embed_tokens (torch.nn.Embedding): output embedding
+    """
+
+    def __init__(self, config: DistilBartConfig, embed_tokens: Optional[nn.Embedding] = None):
+        super().__init__(config=config, embed_tokens=embed_tokens)
+        # Copy structural layers and some of the transformer layers into the student
+        self.decoder_layer_indices = config.decoder_layer_indices
+        # Initialize student layers to some subset of the teacher, these will be set later
+        self.std_layers = nn.ModuleList([self.layers[i] for i in range(len(config.decoder_layer_indices))])
+        if embed_tokens is not None:
+            self.std_embed_tokens = embed_tokens
+        else:
+            self.std_embed_tokens = nn.Embedding(config.vocab_size, config.d_model, self.padding_idx)
+        self.std_embed_positions = BartLearnedPositionalEmbedding(
+            config.max_position_embeddings,
+            config.d_model,
+        )
+        self.std_layernorm_embedding = nn.LayerNorm(config.d_model)
+        # Decoder has one interpolation module per student layer minus 1
+        # Since the final outputs are not interpolated
+        # V2s: add in final interpolation module
+        self.interp = nn.ModuleList([InterpolationModuleV2s() for _ in range(len(config.decoder_layer_indices))])
+
+
+    def setup_interpolation(self):
+        """
+        Wrapper function that should be called after teacher parameters are loaded in
+        Loads in the embeddings, freezes the teacher highway, and student embeddings
+        """
+        self.load_std_embeds()
+        self.freeze_std_embeds()
+        self.freeze_teacher_layers()
+        self.unfreeze_std_layers()
+
+    def load_std_embeds(self):
+        """ After the model has been initialized and teacher information has been loaded, initialize the student
+           embeddings from the teacher, and freeze these embeddings """
+        self.std_embed_tokens.load_state_dict(self.embed_tokens.state_dict())
+        self.std_embed_positions.load_state_dict(self.embed_positions.state_dict())
+        self.std_layernorm_embedding.load_state_dict(self.layernorm_embedding.state_dict())
+    
+    def freeze_teacher_layers(self):
+        """ Freeze the teacher highway gradients """
+        for l in self.layers:
+            for p in l.parameters():
+                p.requires_grad = False
+    
+    def freeze_std_embeds(self):
+        """ Freeze the student copy of the embeddings """
+        for p in self.std_embed_positions.parameters():
+            p.requires_grad = False
+        for p in self.std_embed_tokens.parameters():
+            p.requires_grad = False
+    
+    def unfreeze_std_layers(self):
+        for l in self.std_layers:
+            for p in l.parameters():
+                p.requires_grad = True
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        encoder_hidden_states=None,
+        encoder_attention_mask=None,
+        head_mask=None,
+        encoder_head_mask=None,
+        past_key_values=None,
+        inputs_embeds=None,
+        use_cache=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+    ):  
+
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # retrieve input_ids and inputs_embeds
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
+        elif input_ids is not None:
+            input_shape = input_ids.size()
+            input_ids = input_ids.view(-1, input_shape[-1])
+        elif inputs_embeds is not None:
+            input_shape = inputs_embeds.size()[:-1]
+        else:
+            raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
+
+        # past_key_values_length
+        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
+
+        # Harold: Branch off here
+        std_input_embeds = inputs_embeds
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids) * self.embed_scale
+            std_input_embeds = self.std_embed_tokens(input_ids) * self.embed_scale
+          
+        # Harold: Maybe change in attention mask?
+        attention_mask = self._prepare_decoder_attention_mask(
+            attention_mask, input_shape, inputs_embeds, past_key_values_length
+        )
+
+        # expand encoder attention mask
+        # Harold: Shared cross attention mask
+        if encoder_hidden_states is not None and encoder_attention_mask is not None:
+            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+            encoder_attention_mask = _expand_mask(encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1])
+
+        # embed positions
+        # Harold: Branch off positions
+        positions = self.embed_positions(input_shape, past_key_values_length)
+        std_positions = self.std_embed_positions(input_shape, past_key_values_length)
+
+        # Harold: Create std hidden states
+        hidden_states = inputs_embeds + positions
+        hidden_states = self.layernorm_embedding(hidden_states)
+        std_hidden_states = std_input_embeds + std_positions
+        std_hidden_states = self.std_layernorm_embedding(std_hidden_states)
+        
+        hidden_states = F.dropout(hidden_states, p=self.dropout, training=self.training)
+        std_hidden_states = F.dropout(std_hidden_states, p=self.dropout, training=self.training)
+        
+        # decoder layers
+        # Harold: Accumulation of decoder states remains same
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+        all_cross_attentions = () if (output_attentions and encoder_hidden_states is not None) else None
+        next_decoder_cache = () if use_cache else None
+
+        # check if head_mask has a correct number of layers specified if desired
+        if head_mask is not None:
+            assert head_mask.size()[0] == (
+                len(self.layers)
+            ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
+
+        # Harold: decoder_idx counter
+        std_parallel = self.decoder_layer_indices[0]
+        interp_idx = 0
+        for idx, decoder_layer in enumerate(self.layers):
+            # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+            if output_hidden_states and idx == std_parallel:
+                all_hidden_states += (std_hidden_states,)
+            
+            dropout_probability = random.uniform(0, 1)
+            if self.training and (dropout_probability < self.layerdrop):
+                continue
+            
+            past_key_value = past_key_values[idx] if past_key_values is not None else None
+
+            if getattr(self.config, "gradient_checkpointing", False) and self.training:
+
+                if use_cache:
+                    use_cache = False
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        # None for past_key_value
+                        return module(*inputs, output_attentions, use_cache)
+
+                    return custom_forward
+                # Harold: if arrived at layer aligned pair - perform a student pass
+                # V2s: unified hidden state passing
+                if idx == std_parallel:
+                    # Fetch student decoder layer
+                    std_decoder_layer = self.std_layers[interp_idx]
+                    std_layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(std_decoder_layer),
+                    hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    head_mask[idx] if head_mask is not None else None,
+                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                    None,
+                )
+                layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(decoder_layer),
+                    hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    head_mask[idx] if head_mask is not None else None,
+                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                    None,
+                )
+            else:
+                # Harold: Same as above for non gradient checkpoint case
+                # V2s: unified hidden state passing
+                if idx == std_parallel:
+                    # Fetch student decoder layer
+                    std_decoder_layer = self.std_layers[interp_idx]
+                    std_layer_outputs = std_decoder_layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                )
+
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                )
+            # TODO: If not training, only std_hidden_states exist
+            if idx == std_parallel:
+                std_hidden_states = std_layer_outputs[0]
+            hidden_states = layer_outputs[0]
+
+            # Harold: insert interpolation after the forward passes
+            # Check for layer alignment
+            if idx == std_parallel:
+                # TODO: Debug - skip interpolation
+                
+                # Check if interpolation module exists at this pairing
+                
+                if interp_idx < len(self.interp):
+                    # V2s: Adjust output expectation of the module
+                    # If it does, fetch the interpolation module
+                    interp_module = self.interp[interp_idx]
+                    hidden_states = interp_module(hidden_states, std_hidden_states)
+                
+                # Step the indices
+                interp_idx += 1
+                if interp_idx < len(self.decoder_layer_indices):
+                    std_parallel = self.decoder_layer_indices[interp_idx]
+                
+                # Maintain student history
+                if use_cache:
+                    next_decoder_cache += (std_layer_outputs[3 if output_attentions else 1],)
+
+                if output_attentions:
+                    all_self_attns += (std_layer_outputs[1],)
+
+                    if encoder_hidden_states is not None:
+                        all_cross_attentions += (std_layer_outputs[2],)
+
+        # Harold: only add if last layers are aligned
+        # add hidden states from the last decoder layer
+        if output_hidden_states and idx == std_parallel:
+            all_hidden_states += (std_hidden_states,)
+
+        next_cache = next_decoder_cache if use_cache else None
+        if not return_dict:
+            return tuple(
+                v
+                for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                if v is not None
+            )
+        # Harold: handle the parsing of last hidden states
+        return DistilModelOutputWithPastAndCrossAttentions(
+            last_hidden_state=std_hidden_states,
+            teacher_hidden_state=hidden_states,
+            past_key_values=next_cache,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attns,
+            cross_attentions=all_cross_attentions,
+        )
+# -----------------------------------------------
+# -----------------------------------------------
+# ---------------Attention Decoder---------------
+# -----------------------------------------------
+# -----------------------------------------------

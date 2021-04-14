@@ -3,7 +3,7 @@ command:
   - ${interpreter}
   - ${program}
   - "--dataset_name=squad_v2"
-  - "--output_dir=hyp_interloss_schth2"
+  - "--output_dir=hyp_interloss_schwu"
   - "--model_name_or_path=Primer/bart-squad2"
   - "--tokenizer_name=facebook/bart-large"
   - "--lr_scheduler_type=linear"
@@ -11,7 +11,7 @@ command:
   - "--dec_interpolate_type=warmup"
   - "--conn_time=1"
   - "--reverse_probs=true"
-  - "--loss_type=interpolate"
+  - "--loss_type=finetune"
   - "--learning_rate=0.00001"
   - "--warmup_steps=1000"
   - "--per_device_eval_batch_size=2"
