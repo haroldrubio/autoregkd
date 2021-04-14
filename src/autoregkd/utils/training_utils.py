@@ -79,7 +79,7 @@ class DistilTrainer(Trainer):
             if self.dec_interpolate_type == 'interpolate':
                 self.prob_scheduler = InterpolationScheduler(modules, self.scheduler_args, num_training_steps)
 
-            elif self.dec_interpolate_type == 'interpolatev2s':
+            elif self.dec_interpolate_type == 'interpolatev2s' or 'attention' in self.dec_interpolate_type:
                 # PLAD: switch to PLAD scheduling
                 self.prob_scheduler = InterpolationSchedulerV2s(modules, self.scheduler_args, num_training_steps)
 
