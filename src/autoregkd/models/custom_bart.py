@@ -1717,10 +1717,6 @@ class HistoryAttention(nn.Module):
             # Or the average of all
             attn_output=torch.mean(torch.stack(attn_list), dim=0)
 
-        print(f'probs shape: {attn_probs.shape}')
-        print(f'vals shape: {value_states.shape}')
-
-
         assert attn_output.size() == (
             bsz * self.num_heads,
             orig_tgt_len,
