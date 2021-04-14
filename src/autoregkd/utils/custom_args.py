@@ -103,7 +103,7 @@ class ModelArguments:
     )
     dec_interpolate_type: str = field(
         default="distill",
-        metadata={"help": "Supports distill, interpolate, interpolatev2s, theseus, warmup"},
+        metadata={"help": "Supports distill, interpolate, interpolatev2s, theseus, warmup, attention-mean, attention-last"},
     )
 
 @dataclass
