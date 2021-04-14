@@ -1710,10 +1710,12 @@ class HistoryAttention(nn.Module):
                     curr_hidden_state = curr_hidden_state + scaled_layer
             attn_list.append(curr_hidden_state)
         
-        # Either return last attn
-        # attn_output = attn_list[len(attn_list) - 1]
-        # Or the average of all
-        attn_output=torch.mean(torch.stack(input_list), dim=0)
+        if 'last' in self.decoder_type:
+            # Either return last attn
+            attn_output = attn_list[len(attn_list) - 1]
+        elif 'mean' in self.decoder_type:
+            # Or the average of all
+            attn_output=torch.mean(torch.stack(attn_list), dim=0)
 
         print(f'probs shape: {attn_probs.shape}')
         print(f'vals shape: {value_states.shape}')
@@ -1762,6 +1764,14 @@ class AttentionDecoder(BartDecoder):
         # Since the final outputs are not interpolated
         # V2s: add in final interpolation module
         self.interp = nn.ModuleList([InterpolationModuleV2s() for _ in range(len(config.decoder_layer_indices))])
+        # Attention: initialize history attention
+        self.history_attention = HistoryAttention(
+            self.embed_dim,
+            1,
+            dropout=config.attention_dropout,
+            is_decoder=True,
+            decoder_type=config.decoder_type
+        )
 
 
     def setup_interpolation(self):
