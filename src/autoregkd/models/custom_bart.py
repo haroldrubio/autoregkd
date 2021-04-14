@@ -1590,7 +1590,7 @@ class HistoryAttention(nn.Module):
 
     def forward(
         self,
-        hidden_states: List[torch.Tensor],
+        hidden_states: Tuple[torch.Tensor],
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -1817,7 +1817,7 @@ class AttentionDecoder(BartDecoder):
         inputs_embeds=None,
         use_cache=None,
         output_attentions=None,
-        output_hidden_states=None,
+        output_hidden_states=True,
         return_dict=None,
     ):  
 
