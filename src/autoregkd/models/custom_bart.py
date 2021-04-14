@@ -1976,6 +1976,8 @@ class AttentionDecoder(BartDecoder):
             if idx == std_parallel:
                 std_hidden_states = std_layer_outputs[0]
             hidden_states = layer_outputs[0]
+            # Attention: copy value into tch_hidden_state
+            tch_hidden_states = layer_outputs[0]
 
             # Harold: insert interpolation after the forward passes
             # Check for layer alignment
@@ -2006,9 +2008,10 @@ class AttentionDecoder(BartDecoder):
                         all_cross_attentions += (std_layer_outputs[2],)
 
         # Harold: only add if last layers are aligned
+        # Attention: history is teacher-based
         # add hidden states from the last decoder layer
         if output_hidden_states and idx == std_parallel:
-            all_hidden_states += (std_hidden_states,)
+            all_hidden_states += (tch_hidden_states,)
 
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
