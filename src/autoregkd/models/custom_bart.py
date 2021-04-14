@@ -1558,8 +1558,6 @@ class TheseusDecoder(BartDecoder):
 # -----------------------------------------------
 # -----------------------------------------------
 class HistoryAttention(nn.Module):
-    """Multi-headed attention from 'Attention Is All You Need' paper"""
-
     def __init__(
         self,
         embed_dim: int,
@@ -1579,17 +1577,16 @@ class HistoryAttention(nn.Module):
         self.scaling = self.head_dim ** -0.5
         self.is_decoder = is_decoder
 
-        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        # Harold: trim attention parameters
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
     def forward(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: List[torch.Tensor],
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -1597,7 +1594,15 @@ class HistoryAttention(nn.Module):
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-
+        # Harold: Expect - iterable of tensors
+        list_hidden_states = hidden_states
+        orig_tgt_len = hidden_states[0].shape[1]
+        agg_hidden_states = []
+        for h in hidden_states:
+            # Average over positional dimension
+            agg_hidden_states.append(torch.mean(h, dim=1, keepdim=True))
+        # Concatenate into final
+        hidden_states = torch.cat(agg_hidden_states, dim=1)
         # if key_value_states are provided this layer is used as a cross-attention layer
         # for the decoder
         is_cross_attention = key_value_states is not None
@@ -1623,7 +1628,8 @@ class HistoryAttention(nn.Module):
         else:
             # self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            # Harold: overwrite value states with the original hidden states
+            value_states = hidden_states
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -1634,9 +1640,6 @@ class HistoryAttention(nn.Module):
             # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
             # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_states, value_states)
-
-        # Harold: overwrite value states with the original hidden states
-        value_states = hidden_states
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
         query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
@@ -1683,21 +1686,48 @@ class HistoryAttention(nn.Module):
 
         attn_probs = F.dropout(attn_weights, p=self.dropout, training=self.training)
 
-        attn_output = torch.bmm(attn_probs, value_states)
+        # Harold: replace attn_output with different value
+        n_layers = attn_probs.shape[1]
+        attn_list = []
+        # bsz, tgt_len, embed_dim
+        for i in range(n_layers):
+            curr_prob_matrix = attn_probs[:, i, :]
+            curr_hidden_state = None
+            for j in range(n_layers):
+                # Magic scalar expansion
+                curr_probs = curr_prob_matrix[:, j].unsqueeze(1).unsqueeze(1)
+                curr_probs = curr_probs.expand(-1, orig_tgt_len, embed_dim)
+                scaled_layer = curr_probs * list_hidden_states[j]
+
+                # Add to tensor
+                if curr_hidden_state is None:
+                    curr_hidden_state = scaled_layer
+                else:
+                    curr_hidden_state = curr_hidden_state + scaled_layer
+            attn_list.append(curr_hidden_state)
+        
+        # Either return last attn
+        # attn_output = attn_list[len(attn_list) - 1]
+        # Or the average of all
+        attn_output=torch.mean(torch.stack(input_list), dim=0)
+
+        print(f'probs shape: {attn_probs.shape}')
+        print(f'vals shape: {value_states.shape}')
+
 
         assert attn_output.size() == (
             bsz * self.num_heads,
-            tgt_len,
+            orig_tgt_len,
             self.head_dim,
-        ), f"`attn_output` should be of size {(bsz, self.num_heads, tgt_len, self.head_dim)}, but is {attn_output.size()}"
+        ), f"`attn_output` should be of size {(bsz, self.num_heads, orig_tgt_len, self.head_dim)}, but is {attn_output.size()}"
 
         attn_output = (
-            attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
+            attn_output.view(bsz, self.num_heads, orig_tgt_len, self.head_dim)
             .transpose(1, 2)
-            .reshape(bsz, tgt_len, embed_dim)
+            .reshape(bsz, orig_tgt_len, embed_dim)
         )
 
-        attn_output = self.out_proj(attn_output)
+        # Harold: Don't perform another out projection
 
         return attn_output, attn_weights_reshaped, past_key_value
 class AttentionDecoder(BartDecoder):
@@ -1832,6 +1862,8 @@ class AttentionDecoder(BartDecoder):
         
         hidden_states = F.dropout(hidden_states, p=self.dropout, training=self.training)
         std_hidden_states = F.dropout(std_hidden_states, p=self.dropout, training=self.training)
+        # Attention: hold a specific teacher hidden state copy
+        tch_hidden_states = hidden_states
         
         # decoder layers
         # Harold: Accumulation of decoder states remains same
@@ -1851,8 +1883,9 @@ class AttentionDecoder(BartDecoder):
         interp_idx = 0
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+            # Attention: maintain teacher history instead
             if output_hidden_states and idx == std_parallel:
-                all_hidden_states += (std_hidden_states,)
+                all_hidden_states += (tch_hidden_states,)
             
             dropout_probability = random.uniform(0, 1)
             if self.training and (dropout_probability < self.layerdrop):
