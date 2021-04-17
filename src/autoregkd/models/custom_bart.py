@@ -2194,58 +2194,60 @@ class LongAttentionDecoder(BartDecoder):
         std_parallel = self.decoder_layer_indices[0]
         interp_idx = 0
         # LongAttention: Precompute teacher history
-        for idx, decoder_layer in enumerate(self.layers):
-            # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
-            # Attention: maintain teacher history instead
-            if output_hidden_states and idx == std_parallel:
-                all_hidden_states += (tch_hidden_states,)
-            
-            dropout_probability = random.uniform(0, 1)
-            if self.training and (dropout_probability < self.layerdrop):
-                continue
-            
-            past_key_value = past_key_values[idx] if past_key_values is not None else None
+        # LongAttention: Only precompute during training
+        if self.training:
+            for idx, decoder_layer in enumerate(self.layers):
+                # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+                # Attention: maintain teacher history instead
+                if output_hidden_states and idx == std_parallel:
+                    all_hidden_states += (tch_hidden_states,)
+                
+                dropout_probability = random.uniform(0, 1)
+                if self.training and (dropout_probability < self.layerdrop):
+                    continue
+                
+                past_key_value = past_key_values[idx] if past_key_values is not None else None
 
-            if getattr(self.config, "gradient_checkpointing", False) and self.training:
+                if getattr(self.config, "gradient_checkpointing", False) and self.training:
 
-                if use_cache:
-                    use_cache = False
+                    if use_cache:
+                        use_cache = False
 
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(*inputs, output_attentions, use_cache)
+                    def create_custom_forward(module):
+                        def custom_forward(*inputs):
+                            # None for past_key_value
+                            return module(*inputs, output_attentions, use_cache)
 
-                    return custom_forward
-                # Harold: if arrived at layer aligned pair - perform a student pass
-                # V2s: unified hidden state passing
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),
-                    hidden_states,
-                    attention_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    head_mask[idx] if head_mask is not None else None,
-                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
-                    None,
-                )
-            else:
-                # Harold: Same as above for non gradient checkpoint case
-                # V2s: unified hidden state passing
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
-                    past_key_value=past_key_value,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                )
-            # Attention: copy value into tch_hidden_state
-            tch_hidden_states = layer_outputs[0]
-            hidden_states = layer_outputs[0]
+                        return custom_forward
+                    # Harold: if arrived at layer aligned pair - perform a student pass
+                    # V2s: unified hidden state passing
+                    layer_outputs = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(decoder_layer),
+                        hidden_states,
+                        attention_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        head_mask[idx] if head_mask is not None else None,
+                        encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                        None,
+                    )
+                else:
+                    # Harold: Same as above for non gradient checkpoint case
+                    # V2s: unified hidden state passing
+                    layer_outputs = decoder_layer(
+                        hidden_states,
+                        attention_mask=attention_mask,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_attention_mask=encoder_attention_mask,
+                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                        encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                        past_key_value=past_key_value,
+                        output_attentions=output_attentions,
+                        use_cache=use_cache,
+                    )
+                # Attention: copy value into tch_hidden_state
+                tch_hidden_states = layer_outputs[0]
+                hidden_states = layer_outputs[0]
         # LongAttention: End teacher loop
 
         for idx, decoder_layer in enumerate(self.std_layers):
@@ -2276,7 +2278,7 @@ class LongAttentionDecoder(BartDecoder):
                 std_decoder_layer = self.std_layers[interp_idx]
                 std_layer_outputs = torch.utils.checkpoint.checkpoint(
                 create_custom_forward(std_decoder_layer),
-                hidden_states,
+                std_hidden_states,
                 attention_mask,
                 encoder_hidden_states,
                 encoder_attention_mask,
@@ -2290,7 +2292,7 @@ class LongAttentionDecoder(BartDecoder):
                 # Fetch student decoder layer
                 std_decoder_layer = self.std_layers[interp_idx]
                 std_layer_outputs = std_decoder_layer(
-                hidden_states,
+                std_hidden_states,
                 attention_mask=attention_mask,
                 encoder_hidden_states=encoder_hidden_states,
                 encoder_attention_mask=encoder_attention_mask,
@@ -2313,10 +2315,12 @@ class LongAttentionDecoder(BartDecoder):
             if interp_idx < len(self.interp):
                 # V2s: Adjust output expectation of the module
                 # If it does, fetch the interpolation module
-                interp_module = self.interp[interp_idx]
-                # Attention: first obtain an attended teacher state, then interpolate
-                source_states, _, _ = self.history_attention(all_hidden_states)
-                hidden_states = interp_module(source_states, std_hidden_states)
+                # LongAttention: only perform is training
+                if self.training:
+                    interp_module = self.interp[interp_idx]
+                    # Attention: first obtain an attended teacher state, then interpolate
+                    source_states, _, _ = self.history_attention(all_hidden_states)
+                    std_hidden_states = interp_module(source_states, std_hidden_states)
             
             # Step the indices
             interp_idx += 1
@@ -2337,7 +2341,7 @@ class LongAttentionDecoder(BartDecoder):
         # Attention: history is teacher-based
         # add hidden states from the last decoder layer
         if output_hidden_states and idx == std_parallel:
-            all_hidden_states += (tch_hidden_states,)
+            all_hidden_states += (hidden_states,)
 
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
