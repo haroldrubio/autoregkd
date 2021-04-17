@@ -2342,12 +2342,13 @@ class LongAttentionDecoder(BartDecoder):
         # add hidden states from the last decoder layer
         if output_hidden_states and idx == std_parallel:
             all_hidden_states += (hidden_states,)
-
+        
+        # LongAttention: Attempt to alleviate out-of-index error
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
             return tuple(
                 v
-                for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [std_hidden_states, next_cache, None, all_self_attns, all_cross_attentions]
                 if v is not None
             )
         # Harold: handle the parsing of last hidden states
