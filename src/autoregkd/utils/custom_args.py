@@ -36,6 +36,10 @@ class ModelArguments:
         default="main",
         metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
     )
+    use_fast_tokenizer: bool = field(
+        default=True,
+        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
+    )
     use_auth_token: bool = field(
         default=False,
         metadata={
@@ -118,10 +122,24 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
+    text_column: Optional[str] = field(
+        default=None,
+        metadata={"help": "The name of the column in the datasets containing the full texts (for summarization)."},
+    )
+    summary_column: Optional[str] = field(
+        default=None,
+        metadata={"help": "The name of the column in the datasets containing the summaries (for summarization)."},
+    )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
         metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+    )
+    test_file: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "An optional input test data file to evaluate the metrics (rouge) on " "(a jsonlines or csv file)."
+        },
     )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
@@ -129,6 +147,29 @@ class DataTrainingArguments:
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
+    )
+    max_source_length: Optional[int] = field(
+        default=1024,
+        metadata={
+            "help": "The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    max_target_length: Optional[int] = field(
+        default=128,
+        metadata={
+            "help": "The maximum total sequence length for target text after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    val_max_target_length: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The maximum total sequence length for validation target text after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded. Will default to `max_target_length`."
+            "This argument is also used to override the ``max_length`` param of ``model.generate``, which is used "
+            "during ``evaluate`` and ``predict``."
+        },
     )
     max_seq_length: int = field(
         default=384,
@@ -165,6 +206,13 @@ class DataTrainingArguments:
             "value if set."
         },
     )
+    max_predict_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of prediction examples to this "
+            "value if set."
+        },
+    )
     val_on_training: bool = field(
         default=False,
         metadata={
@@ -196,6 +244,22 @@ class DataTrainingArguments:
             "help": "The maximum length of an answer that can be generated. This is needed because the start "
             "and end predictions are not conditioned on one another."
         },
+    )
+    num_beams: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Number of beams to use for evaluation. This argument will be passed to ``model.generate``, "
+            "which is used during ``evaluate`` and ``predict``."
+        },
+    )
+    ignore_pad_token_for_loss: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to ignore the tokens corresponding to padded labels in the loss computation or not."
+        },
+    )
+    source_prefix: Optional[str] = field(
+        default=None, metadata={"help": "A prefix to add before every source text (useful for T5 models)."}
     )
 
     def __post_init__(self):
