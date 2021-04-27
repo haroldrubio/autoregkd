@@ -10,7 +10,7 @@ command:
   - "--num_decoder_layers=3"
   - "--dec_interpolate_type=long-attention-mean"
   - "--reverse_probs=true"
-  - "--loss_type=interpolate"
+  - "--loss_type=finetune"
   - "--learning_rate=0.00001"
   - "--warmup_steps=1000"
   - "--per_device_eval_batch_size=1"
