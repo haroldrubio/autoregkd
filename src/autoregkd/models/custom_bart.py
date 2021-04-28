@@ -316,7 +316,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
 
         # Attention: store attention scores
         if 'attention' in self.config.decoder_type:
-            self.attention_list = outputs[3]
+            self.attention_list = outputs[2]
 
         sequence_output = outputs[0]
         
@@ -1813,8 +1813,6 @@ class HistoryAttention(nn.Module):
 
         attn_probs = F.dropout(attn_weights, p=self.dropout, training=self.training)
         avg_attn_probs = torch.mean(attn_probs, dim=0)
-        print(attn_probs.shape)
-        print(avg_attn_probs.shape)
 
         # Harold: replace attn_output with different value
         n_layers = attn_probs.shape[1]
