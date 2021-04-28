@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Tuple, Union, Iterable, Callable
 
 import torch
+import wandb
 from torch import nn
 from torch.optim import Optimizer
 
@@ -170,7 +171,7 @@ class DistilTrainer(Trainer):
                 # Convert tensor to numpy
                 print(attn_scores.shape)
                 cpu_scores = attn_scores.detach().cpu().numpy()
-                logs[f'attn_at_std_layer_{idx}'] = cpu_scores
+                logs[f'attn_at_std_layer_{idx}'] = wandb.Histogram(cpu_scores)
         super().log(logs)
 
 # ---------------------- Replicate for Seq2Seq Trainer ----------------------
@@ -297,6 +298,6 @@ class DistilSeq2SeqTrainer(Seq2SeqTrainer):
             for idx, attn_scores in enumerate(attn_list):
                 # Convert tensor to numpy
                 cpu_scores = attn_scores.detach().cpu().numpy()
-                logs[f'attn_at_std_layer_{idx}'] = cpu_scores
+                logs[f'attn_at_std_layer_{idx}'] = wandb.Histogram(cpu_scores)
 
         super().log(logs)
