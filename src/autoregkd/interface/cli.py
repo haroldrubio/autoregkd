@@ -17,6 +17,7 @@ def experiment(**config):
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    print(data_args.dataset_name)
     if 'squad' in data_args.dataset_name:
         main(model_args, data_args, training_args)
     else:
