@@ -8,7 +8,7 @@ from ..utils.custom_args import ModelArguments, DataTrainingArguments, DistilArg
 
 def experiment(**config):
     """Train a BART model"""
-    from ...hf_qa.run_qa import main
+    from ...hf_qa.run_qa import main as main_qa
     from ...hf_sum.run_summarization import main as main_sum
     
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, DistilArguments))
@@ -19,6 +19,6 @@ def experiment(**config):
 
     print(data_args.dataset_name)
     if 'squad' in data_args.dataset_name:
-        main(model_args, data_args, training_args)
+        main_qa(model_args, data_args, training_args)
     else:
         main_sum(model_args, data_args, training_args)    
