@@ -167,7 +167,9 @@ class DistilTrainer(Trainer):
         if 'attention' in self.dec_interpolate_type:
             attn_list = self.model.attention_list
             for idx, attn_scores in enumerate(attn_list):
-                logs[f'attn_at_std_layer_{idx}'] = attn_scores
+                # Convert tensor to numpy
+                cpu_scores = attn_scores.detach().cpu().numpy()
+                logs[f'attn_at_std_layer_{idx}'] = cpu_scores
         super().log(logs)
 
 # ---------------------- Replicate for Seq2Seq Trainer ----------------------
@@ -292,6 +294,8 @@ class DistilSeq2SeqTrainer(Seq2SeqTrainer):
         if 'attention' in self.dec_interpolate_type:
             attn_list = self.model.attention_list
             for idx, attn_scores in enumerate(attn_list):
-                logs[f'attn_at_std_layer_{idx}'] = attn_scores
+                # Convert tensor to numpy
+                cpu_scores = attn_scores.detach().cpu().numpy()
+                logs[f'attn_at_std_layer_{idx}'] = cpu_scores
 
         super().log(logs)
