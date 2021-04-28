@@ -1812,6 +1812,8 @@ class HistoryAttention(nn.Module):
             attn_weights_reshaped = None
 
         attn_probs = F.dropout(attn_weights, p=self.dropout, training=self.training)
+        print(avg_attn_probs.shape)
+        sys.exit(1)
         avg_attn_probs = torch.mean(attn_probs, dim=0)
 
         # Harold: replace attn_output with different value
