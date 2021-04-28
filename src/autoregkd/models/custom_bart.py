@@ -2021,7 +2021,8 @@ class AttentionDecoder(BartDecoder):
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             # Attention: maintain teacher history instead
-            if output_hidden_states and idx == std_parallel:
+            # TRAGIC BUG: Was not attending over full previous history
+            if output_hidden_states:
                 all_hidden_states += (tch_hidden_states,)
             
             dropout_probability = random.uniform(0, 1)
