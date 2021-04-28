@@ -14,7 +14,8 @@ from transformers.utils import logging
 
 from ..models.custom_bart import(
     DistilBartConfig,
-    DistilBartForQuestionAnswering
+    DistilBartForQuestionAnswering,
+    DistilBartForSummarization
 )
 
 LAYERS_TO_COPY = {

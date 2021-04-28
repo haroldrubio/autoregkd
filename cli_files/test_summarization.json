@@ -1,0 +1,33 @@
+{
+	"dataset_name": "xsum",
+	"output_dir": "test_sum",
+	"model_name_or_path": "facebook/bart-large-xsum",
+	"tokenizer_name": "facebook/bart-large",
+	"num_decoder_layers": 3,
+	"dec_interpolate_type": "interpolatev2s",
+	"max_prob": 1,
+	"conn_time": 0.75,
+	"reverse_probs": true,
+	"loss_type": "interpolate",
+	"lr_scheduler_type": "linear",
+	"learning_rate": 0.00001,
+	"min_length": 11,
+	"max_length": 62,
+	"warmup_steps": 1000,
+	"per_device_eval_batch_size": 2,
+	"per_device_train_batch_size": 4,
+	"gradient_accumulation_steps": 4,
+	"keep_in_memory": true,
+	"num_train_epochs": 3,
+	"eval_accumulation_steps": 100,
+	"save_total_limit": 0,
+	"save_steps": -1,
+	"logging_steps": 50,
+	"do_train": true,
+	"do_eval": true,
+	"eval_steps": 1000
+	"evaluation_strategy": "steps"
+	"fp16": true,
+	"seed": 42,
+	"predict_with_generate": true
+}

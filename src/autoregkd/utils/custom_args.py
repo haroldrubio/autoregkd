@@ -109,7 +109,14 @@ class ModelArguments:
         default="distill",
         metadata={"help": "Supports distill, interpolate, interpolatev2s, theseus, warmup, attention-mean, attention-last, long-attention-mean, long-attention-last"},
     )
-
+    max_length: int = field(
+        default=1,
+        metadata={"help": "Maximum length for generation"}
+    )
+    min_length: int = field(
+        default=10,
+        metadata={"help": "Minimum length for generation"}
+    )
 @dataclass
 class DataTrainingArguments:
     """
