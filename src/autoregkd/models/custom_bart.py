@@ -1815,7 +1815,6 @@ class HistoryAttention(nn.Module):
         avg_attn_probs = torch.mean(attn_probs, dim=0)
         print(attn_probs.shape)
         print(avg_attn_probs.shape)
-        sys.exit(1)
 
         # Harold: replace attn_output with different value
         n_layers = attn_probs.shape[1]
