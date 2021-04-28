@@ -246,6 +246,8 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         super().__init__(config)
         # Handle decoder type
         # V2s: add in interpolatev2s
+        # Attention: store the list of attentions
+        self.attention_list = []
         if config.decoder_type == 'interpolate':
             self.model.decoder = InterpolationDecoder(config, self.model.shared)
         elif config.decoder_type == 'interpolatev2s' or config.decoder_type == 'plad':
@@ -256,7 +258,6 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             self.model.decoder = LongAttentionDecoder(config, self.model.shared)
         elif 'attention' in config.decoder_type:
             self.model.decoder = AttentionDecoder(config, self.model.shared)
-
         # Handle loss type
         self.loss_type = config.loss_type
     
@@ -312,6 +313,10 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         )
         # Harold: delete all but the first 2 items in outputs
         # del outputs[2:]
+
+        # Attention: store attention scores
+        if 'attention' in self.config.decoder_type:
+            self.attention_list = outputs[3]
 
         sequence_output = outputs[0]
         
@@ -1807,6 +1812,7 @@ class HistoryAttention(nn.Module):
             attn_weights_reshaped = None
 
         attn_probs = F.dropout(attn_weights, p=self.dropout, training=self.training)
+        avg_attn_probs = torch.mean(attn_probs, dim=0)
 
         # Harold: replace attn_output with different value
         n_layers = attn_probs.shape[1]
@@ -1849,7 +1855,7 @@ class HistoryAttention(nn.Module):
 
         # Harold: Don't perform another out projection
 
-        return attn_output, attn_weights_reshaped, past_key_value
+        return attn_output, attn_weights_reshaped, past_key_value, avg_attn_probs
 class AttentionDecoder(BartDecoder):
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a :class:`BartDecoderLayer`
@@ -2011,6 +2017,7 @@ class AttentionDecoder(BartDecoder):
         # Harold: decoder_idx counter
         std_parallel = self.decoder_layer_indices[0]
         interp_idx = 0
+        attention_scores = []
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             # Attention: maintain teacher history instead
@@ -2107,7 +2114,9 @@ class AttentionDecoder(BartDecoder):
                     # If it does, fetch the interpolation module
                     interp_module = self.interp[interp_idx]
                     # Attention: first obtain an attended teacher state, then interpolate
-                    source_states, _, _ = self.history_attention(all_hidden_states)
+                    source_states, _, _, attn_scores = self.history_attention(all_hidden_states)
+                    # Attention: store the batch-averaged score
+                    attention_scores.append(attn_scores)
                     hidden_states = interp_module(source_states, std_hidden_states)
                 
                 # Step the indices
@@ -2135,7 +2144,7 @@ class AttentionDecoder(BartDecoder):
         if not return_dict:
             return tuple(
                 v
-                for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [std_hidden_states, hidden_states, attention_scores, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
         # Harold: handle the parsing of last hidden states
