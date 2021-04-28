@@ -164,6 +164,10 @@ class DistilTrainer(Trainer):
             # Record parameter groups
             for idx, group in enumerate(self.optimizer.param_groups):
                 logs[f'lr_at_layer_{idx}'] = group['lr']
+            if 'attention' in self.dec_interpolate_type:
+            attn_list = self.model.attention_list
+            for idx, attn_scores in enumerate(attn_list):
+                logs[f'attn_at_std_layer_{idx}'] = attn_scores
         super().log(logs)
 
 # ---------------------- Replicate for Seq2Seq Trainer ----------------------
@@ -289,5 +293,5 @@ class DistilSeq2SeqTrainer(Seq2SeqTrainer):
             attn_list = self.model.attention_list
             for idx, attn_scores in enumerate(attn_list):
                 logs[f'attn_at_std_layer_{idx}'] = attn_scores
-                
+
         super().log(logs)
