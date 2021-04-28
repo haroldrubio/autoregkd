@@ -168,6 +168,7 @@ class DistilTrainer(Trainer):
             attn_list = self.model.attention_list
             for idx, attn_scores in enumerate(attn_list):
                 # Convert tensor to numpy
+                print(attn_scores.shape)
                 cpu_scores = attn_scores.detach().cpu().numpy()
                 logs[f'attn_at_std_layer_{idx}'] = cpu_scores
         super().log(logs)
