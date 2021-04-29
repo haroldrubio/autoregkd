@@ -315,8 +315,10 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         # del outputs[2:]
 
         # Attention: store attention scores
-        if 'attention' in self.config.decoder_type:
+        # Attention update to save memory: only at training
+        if 'attention' in self.config.decoder_type and self.training:
             self.attention_list = outputs[2]
+        
 
         sequence_output = outputs[0]
         
