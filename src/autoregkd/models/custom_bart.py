@@ -2163,7 +2163,7 @@ class AttentionDecoder(BartDecoder):
             if not return_dict:
                 return tuple(
                     v
-                    for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                    for v in [hidden_states]
                     if v is not None
                 )
         # Harold: handle the parsing of last hidden states
