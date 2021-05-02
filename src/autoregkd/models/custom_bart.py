@@ -317,7 +317,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         # Attention: store attention scores
         # Attention update to save memory: only at training
         if 'attention' in self.config.decoder_type and self.training:
-            self.attention_list = outputs[2]
+            self.attention_list = outputs[1]
         
 
         sequence_output = outputs[0]
@@ -2026,12 +2026,10 @@ class AttentionDecoder(BartDecoder):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             # Attention: maintain teacher history instead
             # TRAGIC BUG: Was not attending over full previous history
-            if output_hidden_states:
+            if output_hidden_states and self.training:
                 all_hidden_states += (tch_hidden_states,)
             
-            dropout_probability = random.uniform(0, 1)
-            if self.training and (dropout_probability < self.layerdrop):
-                continue
+            # Attention: remove layer drop
             
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
@@ -2061,16 +2059,18 @@ class AttentionDecoder(BartDecoder):
                     encoder_head_mask[idx] if encoder_head_mask is not None else None,
                     None,
                 )
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),
-                    hidden_states,
-                    attention_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    head_mask[idx] if head_mask is not None else None,
-                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
-                    None,
-                )
+                # Attention: save computation by skipping teacher pass
+                if self.training:
+                    layer_outputs = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(decoder_layer),
+                        hidden_states,
+                        attention_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        head_mask[idx] if head_mask is not None else None,
+                        encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                        None,
+                    )
             else:
                 # Harold: Same as above for non gradient checkpoint case
                 # V2s: unified hidden state passing
@@ -2088,24 +2088,26 @@ class AttentionDecoder(BartDecoder):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                 )
-
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
-                    past_key_value=past_key_value,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
+                # Attention: save computation by skipping teacher pass
+                if self.training:
+                    layer_outputs = decoder_layer(
+                        hidden_states,
+                        attention_mask=attention_mask,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_attention_mask=encoder_attention_mask,
+                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                        encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                        past_key_value=past_key_value,
+                        output_attentions=output_attentions,
+                        use_cache=use_cache,
                 )
             # TODO: If not training, only std_hidden_states exist
             if idx == std_parallel:
                 std_hidden_states = std_layer_outputs[0]
-            hidden_states = layer_outputs[0]
-            # Attention: copy value into tch_hidden_state
-            tch_hidden_states = layer_outputs[0]
+            if self.training:
+                hidden_states = layer_outputs[0]
+                # Attention: copy value into tch_hidden_state
+                tch_hidden_states = layer_outputs[0]
 
             # Harold: insert interpolation after the forward passes
             # Check for layer alignment
@@ -2113,17 +2115,19 @@ class AttentionDecoder(BartDecoder):
                 # TODO: Debug - skip interpolation
                 
                 # Check if interpolation module exists at this pairing
-                
-                if interp_idx < len(self.interp):
-                    # V2s: Adjust output expectation of the module
-                    # If it does, fetch the interpolation module
-                    interp_module = self.interp[interp_idx]
-                    # Attention: first obtain an attended teacher state, then interpolate
-                    source_states, _, _, attn_scores = self.history_attention(all_hidden_states)
-                    # Attention: store the batch-averaged score
-                    attention_scores.append(attn_scores)
-                    hidden_states = interp_module(source_states, std_hidden_states)
-                
+                # Attention: skip this if evaluating
+                if self.training:
+                    if interp_idx < len(self.interp):
+                        # V2s: Adjust output expectation of the module
+                        # If it does, fetch the interpolation module
+                        interp_module = self.interp[interp_idx]
+                        # Attention: first obtain an attended teacher state, then interpolate
+                        source_states, _, _, attn_scores = self.history_attention(all_hidden_states)
+                        # Attention: store the batch-averaged score
+                        attention_scores.append(attn_scores)
+                        hidden_states = interp_module(source_states, std_hidden_states)
+                else:
+                    hidden_states = std_hidden_states
                 # Step the indices
                 interp_idx += 1
                 if interp_idx < len(self.decoder_layer_indices):
@@ -2143,13 +2147,15 @@ class AttentionDecoder(BartDecoder):
         # Attention: history is teacher-based
         # add hidden states from the last decoder layer
         if output_hidden_states and idx == std_parallel:
-            all_hidden_states += (tch_hidden_states,)
+            if self.training:
+                all_hidden_states += (tch_hidden_states,)
 
+        # Attention: return interpolated states only
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
             return tuple(
                 v
-                for v in [std_hidden_states, hidden_states, attention_scores, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [hidden_states, attention_scores, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
         # Harold: handle the parsing of last hidden states
