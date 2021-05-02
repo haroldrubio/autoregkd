@@ -1062,6 +1062,8 @@ class InterpolationDecoderV2s(BartDecoder):
         for l in self.layers:
             for p in l.parameters():
                 p.requires_grad = False
+        for p in self.layernorm_embedding.parameters():
+            p.requires_grad = False
     
     def freeze_std_embeds(self):
         """ Freeze the student copy of the embeddings """
