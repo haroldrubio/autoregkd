@@ -60,6 +60,7 @@ class DistilBartConfig(BartConfig):
                  num_teacher_enc: int = 12,
                  num_teacher_dec: int = 12,
                  loss_type: str = 'finetune',
+                 mix: float = -1,
                  **kwargs
                  ):
         super().__init__(
@@ -73,6 +74,7 @@ class DistilBartConfig(BartConfig):
         self.num_teacher_enc = num_teacher_enc
         self.num_teacher_dec = num_teacher_dec
         self.loss_type = loss_type
+        self.mix = mix
 
 class DistilBartEncoder(BartEncoder):
     """
@@ -258,6 +260,8 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
             self.model.decoder = LongAttentionDecoder(config, self.model.shared)
         elif 'attention' in config.decoder_type:
             self.model.decoder = AttentionDecoder(config, self.model.shared)
+        elif config.decoder_type == 'distribution':
+            self.model.decoder = DistributionDecoder(config, self.model.shared)
         # Handle loss type
         self.loss_type = config.loss_type
     
@@ -2441,7 +2445,7 @@ class DistributionDecoder(BartDecoder):
                             source_states = self.mix * all_hidden_states[len(all_hidden_states) - 1]
                             ratio = len(self.layers) / len(self.std_layers)
                             for tch_idx in range(self.decoder_layer_indices[interp_idx - 1], self.decoder_layer_indices[interp_idx]):
-                                source_states += (1 - self.mix) / ratio * all_hidden_states[tch_idx]
+                                source_states = source_states + (1 - self.mix) / ratio * all_hidden_states[tch_idx]
                         # Attention: store the batch-averaged score
                         hidden_states = interp_module(source_states, std_hidden_states)
                 else:
