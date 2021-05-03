@@ -92,6 +92,10 @@ class ModelArguments:
             "help": "Reverses the order of annealing"
         },
     )
+    mix: float = field(
+        default=-1,
+        metadata={"help": "When performing distribution, this controls how much mass goes to the biased state"}
+    )
     # ----------Swap Prob Args----------
     enc_interpolate: bool = field(
         default=False,
@@ -107,7 +111,7 @@ class ModelArguments:
     )
     dec_interpolate_type: str = field(
         default="distill",
-        metadata={"help": "Supports distill, interpolate, interpolatev2s, theseus, warmup, attention-mean, attention-last, long-attention-mean, long-attention-last"},
+        metadata={"help": "Supports distill, interpolate, interpolatev2s, theseus, warmup, attention-mean, attention-last, long-attention-mean, long-attention-last, distribution"},
     )
     max_length: int = field(
         default=1,
