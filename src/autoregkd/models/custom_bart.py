@@ -2442,9 +2442,9 @@ class DistributionDecoder(BartDecoder):
                         if interp_idx == 0:
                             source_states = hidden_states
                         else:
-                            source_states = self.mix * all_hidden_states[len(all_hidden_states) - 1]
+                            source_states = self.mix * hidden_states
                             ratio = len(self.layers) / len(self.std_layers)
-                            for tch_idx in range(self.decoder_layer_indices[interp_idx - 1], self.decoder_layer_indices[interp_idx]):
+                            for tch_idx in range(self.decoder_layer_indices[interp_idx - 1] + 1, self.decoder_layer_indices[interp_idx] + 1):
                                 source_states = source_states + (1 - self.mix) / ratio * all_hidden_states[tch_idx]
                         # Attention: store the batch-averaged score
                         hidden_states = interp_module(source_states, std_hidden_states)
