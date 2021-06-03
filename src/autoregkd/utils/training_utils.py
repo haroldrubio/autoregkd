@@ -293,6 +293,8 @@ class DistilSeq2SeqTrainer(Seq2SeqTrainer):
             # Record parameter groups
             for idx, group in enumerate(self.optimizer.param_groups):
                 logs[f'lr_at_layer_{idx}'] = group['lr']
+        # DEBUG: temp disable attention logging
+        '''
         if 'attention' in self.dec_interpolate_type:
             attn_list = self.model.attention_list
             for idx, attn_scores in enumerate(attn_list):
@@ -301,3 +303,4 @@ class DistilSeq2SeqTrainer(Seq2SeqTrainer):
                 logs[f'attn_at_std_layer_{idx}'] = wandb.Histogram(cpu_scores)
 
         super().log(logs)
+        '''
