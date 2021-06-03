@@ -2157,6 +2157,13 @@ class AttentionDecoder(BartDecoder):
         # Attention: return interpolated states only
         # Debugging: revert attenting change in eval
         next_cache = next_decoder_cache if use_cache else None
+        if not return_dict:
+                return tuple(
+                    v
+                    for v in [hidden_states, attention_scores, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                    if v is not None
+                )
+        '''
         if self.training:
             if not return_dict:
                 return tuple(
@@ -2171,6 +2178,7 @@ class AttentionDecoder(BartDecoder):
                     for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                     if v is not None
                 )
+        '''
         # Harold: handle the parsing of last hidden states
         return DistilModelOutputWithPastAndCrossAttentions(
             last_hidden_state=std_hidden_states,
