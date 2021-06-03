@@ -2155,6 +2155,7 @@ class AttentionDecoder(BartDecoder):
                 all_hidden_states += (tch_hidden_states,)
 
         # Attention: return interpolated states only
+        # Debugging: revert attenting change in eval
         next_cache = next_decoder_cache if use_cache else None
         if self.training:
             if not return_dict:
@@ -2167,7 +2168,7 @@ class AttentionDecoder(BartDecoder):
             if not return_dict:
                 return tuple(
                     v
-                    for v in [hidden_states]
+                    for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                     if v is not None
                 )
         # Harold: handle the parsing of last hidden states
@@ -2473,6 +2474,7 @@ class DistributionDecoder(BartDecoder):
                 all_hidden_states += (tch_hidden_states,)
 
         # Attention: return interpolated states only
+        # TODO: re-initialize return variables since something weird is happening
         next_cache = next_decoder_cache if use_cache else None
         if self.training:
             if not return_dict:
