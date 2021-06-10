@@ -322,6 +322,10 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         # Attention update to save memory: only at training
         # DEBUG: temp disable attention logging
         
+        for item in outputs:
+            print(item.shape)
+        sys.exit(1)
+
         if 'attention' in self.config.decoder_type and self.training:
             self.attention_list = outputs[len(outputs) - 1]
     
