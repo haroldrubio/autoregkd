@@ -2155,6 +2155,9 @@ class AttentionDecoder(BartDecoder):
         if output_hidden_states and idx == std_parallel:
             all_hidden_states += (tch_hidden_states,)
 
+        if not self.training:
+            attention_scores = None
+
         # Reset accumulators
         all_hidden_states = all_hidden_states if orig_output_hidden_states else None
         if not self.training:
