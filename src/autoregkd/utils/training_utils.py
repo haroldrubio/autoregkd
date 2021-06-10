@@ -165,7 +165,7 @@ class DistilTrainer(Trainer):
             # Record parameter groups
             for idx, group in enumerate(self.optimizer.param_groups):
                 logs[f'lr_at_layer_{idx}'] = group['lr']
-        if 'attention' in self.dec_interpolate_type:
+        if 'attention' in self.dec_interpolate_type and self.model.training:
             attn_list = self.model.attention_list
             for idx, attn_scores in enumerate(attn_list):
                 # Convert tensor to numpy
