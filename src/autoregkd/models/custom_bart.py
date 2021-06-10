@@ -2132,8 +2132,11 @@ class AttentionDecoder(BartDecoder):
                     hist_out = self.history_attention(all_hidden_states)
                     source_states = hist_out[0]
                     for item in hist_out:
+                        if item is None:
+                            print('none')
+                            continue
                         print(item.shape)
-                    attention_scores.append(attn_scores)
+                    attention_scores.append(hist_out[3])
                     hidden_states = interp_module(source_states, std_hidden_states)
                 
                 # Step the indices
