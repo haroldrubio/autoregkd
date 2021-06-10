@@ -2135,7 +2135,7 @@ class AttentionDecoder(BartDecoder):
                         if item is None:
                             print('none')
                             continue
-                        print(item.shape)
+                        print(type(item))
                     attention_scores.append(hist_out[3])
                     hidden_states = interp_module(source_states, std_hidden_states)
                 
