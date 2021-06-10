@@ -325,7 +325,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         if 'attention' in self.config.decoder_type and self.training:
             for item in outputs:
                 if isinstance(item, List):
-                    self.attention_list = outputs[len(outputs) - 1]
+                    self.attention_list = item
     
         sequence_output = outputs[0]
         
