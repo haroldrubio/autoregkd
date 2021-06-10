@@ -323,7 +323,11 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         # DEBUG: temp disable attention logging
         
         for item in outputs:
-            print(item.shape)
+            if isinstance(item, torch.Tensor):
+                print(item.shape)
+            if isinstance(item, List):
+                for i in item:
+                    print(i.shape)
         sys.exit(1)
 
         if 'attention' in self.config.decoder_type and self.training:
