@@ -2129,7 +2129,10 @@ class AttentionDecoder(BartDecoder):
                     # If it does, fetch the interpolation module
                     interp_module = self.interp[interp_idx]
                     # Attention: first obtain an attended teacher state, then interpolate
-                    source_states, _, _, attn_scores = self.history_attention(all_hidden_states)
+                    hist_out = self.history_attention(all_hidden_states)
+                    source_states = hist_out[0]
+                    for item in hist_out:
+                        print(item.shape)
                     attention_scores.append(attn_scores)
                     hidden_states = interp_module(source_states, std_hidden_states)
                 
