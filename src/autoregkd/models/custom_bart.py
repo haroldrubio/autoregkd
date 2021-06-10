@@ -324,8 +324,7 @@ class DistilBartForQuestionAnswering(BartForQuestionAnswering):
         
         if 'attention' in self.config.decoder_type and self.training:
             self.attention_list = outputs[len(outputs) - 1]
-        
-
+    
         sequence_output = outputs[0]
         
         logits = self.qa_outputs(sequence_output)
@@ -2029,6 +2028,7 @@ class AttentionDecoder(BartDecoder):
         # Harold: decoder_idx counter
         std_parallel = self.decoder_layer_indices[0]
         interp_idx = 0
+        attention_scores = []
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             # Attention: maintain teacher history instead
@@ -2125,9 +2125,8 @@ class AttentionDecoder(BartDecoder):
                     # If it does, fetch the interpolation module
                     interp_module = self.interp[interp_idx]
                     # Attention: first obtain an attended teacher state, then interpolate
-                    hist_attn = self.history_attention(all_hidden_states)
-                    source_states = hist_attn[0]
-                    attn_scores = hist_attn[3]
+                    source_states, _, _, attn_scores = self.history_attention(all_hidden_states)
+                    attention_scores.append(attn_scores)
                     hidden_states = interp_module(source_states, std_hidden_states)
                 
                 # Step the indices
@@ -2163,7 +2162,7 @@ class AttentionDecoder(BartDecoder):
         if not return_dict:
             return tuple(
                 v
-                for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions, attn_scores]
+                for v in [std_hidden_states, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions, attention_scores]
                 if v is not None
             )
         # Harold: handle the parsing of last hidden states
