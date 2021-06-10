@@ -2136,6 +2136,8 @@ class AttentionDecoder(BartDecoder):
                             print('none')
                             continue
                         print(type(item))
+                        if (isinstance(item, torch.tensor)):
+                            print(item.shape)
                     attention_scores.append(hist_out[3])
                     hidden_states = interp_module(source_states, std_hidden_states)
                 
