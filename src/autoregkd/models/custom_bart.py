@@ -2059,16 +2059,28 @@ class AttentionDecoder(BartDecoder):
                 if idx == std_parallel:
                     # Fetch student decoder layer
                     std_decoder_layer = self.std_layers[interp_idx]
-                    std_layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(std_decoder_layer),
-                    hidden_states,
-                    attention_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    head_mask[idx] if head_mask is not None else None,
-                    encoder_head_mask[idx] if encoder_head_mask is not None else None,
-                    None,
-                )
+                    if self.training:
+                        std_layer_outputs = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(std_decoder_layer),
+                        hidden_states,
+                        attention_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        head_mask[idx] if head_mask is not None else None,
+                        encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                        None,
+                        )
+                    else:
+                        std_layer_outputs = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(std_decoder_layer),
+                        std_hidden_states,
+                        attention_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        head_mask[idx] if head_mask is not None else None,
+                        encoder_head_mask[idx] if encoder_head_mask is not None else None,
+                        None,
+                        )
                 layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(decoder_layer),
                     hidden_states,
@@ -2085,18 +2097,30 @@ class AttentionDecoder(BartDecoder):
                 if idx == std_parallel:
                     # Fetch student decoder layer
                     std_decoder_layer = self.std_layers[interp_idx]
-                    std_layer_outputs = std_decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
-                    past_key_value=past_key_value,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                )
-
+                    if self.training:
+                        std_layer_outputs = std_decoder_layer(
+                        hidden_states,
+                        attention_mask=attention_mask,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_attention_mask=encoder_attention_mask,
+                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                        encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                        past_key_value=past_key_value,
+                        output_attentions=output_attentions,
+                        use_cache=use_cache,
+                        )
+                    else:
+                        std_layer_outputs = std_decoder_layer(
+                        std_hidden_states,
+                        attention_mask=attention_mask,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_attention_mask=encoder_attention_mask,
+                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                        encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                        past_key_value=past_key_value,
+                        output_attentions=output_attentions,
+                        use_cache=use_cache,
+                        )
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=attention_mask,
