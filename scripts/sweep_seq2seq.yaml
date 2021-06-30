@@ -1,0 +1,63 @@
+program: scripts/run_seq2seq.py
+project: interpolation_summarization
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--model_type=interpolation"
+  - "--output_dir=./model_outputs/interpolation_outputs/xsum/"
+  - "--overwrite_output_dir=True"
+  - "--model_name=facebook/bart-large-xsum"
+  - "--tokenizer_name=facebook/bart-large-xsum"
+  - "--task=summarization"
+  - "--dataset_name=xsum"
+  - "--fp16=True"
+  - "--fp16_opt_level=O1"
+  - "--gradient_accumulation_steps=2"
+  - "--eval_accumulation_steps=250"
+  - "--freeze_embedding=True"
+  - "--freeze_encoder=True"
+  - "--freeze_lm_head=False"
+  - "--max_source_length=1024"
+  - "--max_target_length=256"
+  - "--num_beams=6"
+  - "--per_device_train_batch_size=32"
+  - "--per_device_eval_batch_size=32"
+  - "--do_train"
+  - "--do_eval"
+  - "--num_interpolation_epochs=4"
+  - "--num_train_epochs=5"
+  - "--evaluation_strategy=steps"
+  - "--num_evals_per_epoch=4"
+  - "--save_total_limit=1"
+  - "--predict_with_generate=True"
+  - "--load_best_model_at_end=True"
+  - ${args}
+method: bayes
+metric:
+  goal: minimize
+  name: "eval/loss"
+parameters:
+  seed:
+    distribution: int_uniform
+    max: 1000
+    min: 1
+  learning_rate:
+    distribution: log_uniform
+    max: -8
+    min: -12
+  interpolation_p:
+    value:
+      0.0
+  max_prob:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  per_level_annealing_duration:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  step_size:
+    distribution: int_uniform
+    max: 50
+    min: 1

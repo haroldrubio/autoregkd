@@ -70,13 +70,13 @@ class QuestionAnsweringTrainer(Trainer):
         if isinstance(eval_dataset, datasets.Dataset):
             eval_dataset.set_format(type=eval_dataset.format["type"], columns=list(eval_dataset.features.keys()))
 
-        start_logits, end_logits = None, None
         if self.post_process_function is not None and self.compute_metrics is not None:
             start_logits = output.predictions[0]
             end_logits = output.predictions[1]
             logits = (start_logits, end_logits)
             eval_preds = self.post_process_function(eval_examples, eval_dataset, logits)
             metrics = self.compute_metrics(eval_preds)
+            metrics = {"eval_" + k: v for k, v in metrics.items()}
 
             self.log(metrics)
         else:
@@ -120,6 +120,7 @@ class QuestionAnsweringTrainer(Trainer):
         end_logits = output.predictions[1]
         eval_preds = self.post_process_function(test_examples, test_dataset, (start_logits, end_logits))
         metrics = self.compute_metrics(eval_preds)
+        metrics = {"test" + k: v for k, v in metrics.items()}
 
         self._memory_tracker.stop_and_update_metrics(metrics)
         return PredictionOutput(predictions=eval_preds.predictions, label_ids=eval_preds.label_ids, metrics=metrics)
@@ -276,14 +277,18 @@ class QuestionAnsweringInterpolationTrainer(QuestionAnsweringTrainer):
     def __init__(self,
                  *args,
                  num_interpolation_epochs: int,
-                 max_prob: int,
-                 per_level_annealing_duration: float,
-                 step_size: int,
+                 learnable_p: bool = False,
+                 alpha_p: float = None,
+                 max_prob: int = None,
+                 per_level_annealing_duration: float = None,
+                 step_size: int = None,
                  interpolation_scheduler: InterpolationScheduler = None,
                  **kwargs):
         super().__init__(*args, **kwargs)
 
         self.num_interpolation_epochs = num_interpolation_epochs
+        self.learnable_p = learnable_p
+        self.alpha_p = alpha_p
         self.max_prob = max_prob
         self.per_level_annealing_duration = per_level_annealing_duration
         self.step_size = step_size
@@ -297,23 +302,42 @@ class QuestionAnsweringInterpolationTrainer(QuestionAnsweringTrainer):
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         super().create_optimizer_and_scheduler(num_training_steps)
 
-        if self.interpolation_scheduler is None:
-            num_interpolation_steps = math.ceil(num_training_steps * self.num_interpolation_epochs / self.args.num_train_epochs)
-            self.interpolation_scheduler = InterpolationScheduler(
-                interpolation_modules=self.model.model.decoder.interpolation_modules,
-                num_interpolation_steps=num_interpolation_steps,
-                max_prob=self.max_prob,
-                per_level_annealing_duration=self.per_level_annealing_duration,
-                step_size=self.step_size
-            )
+        if not self.learnable_p:
+            # Add interpolation scheduler
+            if self.interpolation_scheduler is None:
+                num_interpolation_steps = math.ceil(num_training_steps * self.num_interpolation_epochs / self.args.num_train_epochs)
+                self.interpolation_scheduler = InterpolationScheduler(
+                    interpolation_modules=self.model.model.decoder.interpolation_modules,
+                    num_interpolation_steps=num_interpolation_steps,
+                    max_prob=self.max_prob,
+                    per_level_annealing_duration=self.per_level_annealing_duration,
+                    step_size=self.step_size
+                )
 
-            scheduler_callback = InterpolationCallback(self.interpolation_scheduler)
-            self.add_callback(scheduler_callback)
+                scheduler_callback = InterpolationCallback(self.interpolation_scheduler)
+                self.add_callback(scheduler_callback)
 
     def log(self, logs: Dict[str, float]) -> None:
-        if self.interpolation_scheduler is not None:
-            for i, module in enumerate(self.model.model.decoder.interpolation_modules):
-                logs["decoder_p_{}".format(i)] = module.p.item()
+        for i, module in enumerate(self.model.model.decoder.interpolation_modules):
+            logs["decoder_p_{}".format(i)] = module.p.item()
 
         super().log(logs)
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        if self.learnable_p:
+            loss, outputs = super().compute_loss(model, inputs, return_outputs=True)
+
+            # p regularization to encourage p to be high
+            if isinstance(model, nn.DataParallel):
+                interpolation_modules = model.module.model.decoder.interpolation_modules
+            else:
+                interpolation_modules = model.model.decoder.interpolation_modules
+
+            for p in interpolation_modules.parameters():
+                loss -= self.alpha_p * p.item()
+
+            return (loss, outputs) if return_outputs else loss
+
+        else:
+            return super().compute_loss(model, inputs, return_outputs)
 

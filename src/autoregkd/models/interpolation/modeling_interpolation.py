@@ -41,17 +41,62 @@ class LinearInterpolationModule(nn.Module):
 
     def __init__(self,
                  p: float = 0.0,
-                 type: str = "constant"):
+                 learnable_p: bool = False):
         super().__init__()
         if p < 0.0 or p > 1.0:
             raise ValueError("p must be between 0.0 and 1.0 inclusive. Got {}".format(p))
+
+        self.learnable_p = learnable_p
+        if self.learnable_p:
+            self.p = Parameter(torch.normal(mean=p, std=0.01, size=()))
+            self.p.requires_grad = True
+        else:
+            self.p = Parameter(torch.tensor(p, dtype=torch.float32))
+            self.p.requires_grad = False
+
+    def forward(self, student_in, teacher_in):
+        """
+        """
+        if self.training:
+            assert student_in.shape == teacher_in.shape
+            if self.learnable_p:
+                self.p = Parameter(torch.clamp(self.p, min=0.0, max=1.0))
+
+            return self.p * student_in + (1 - self.p) * teacher_in
+        else:
+            return student_in
+
+
+class StochasticInterpolationModule(nn.Module):
+    """
+    This module contains no parameters and performs a swapping operation on the hidden unit level
+    between two inputs of the same shape
+    """
+    def __init__(self,
+                 p: float = 0.0,
+                 learnable_p: bool = False):
+        super().__init__()
+        if p < 0.0 or p > 1.0:
+            raise ValueError("p must be between 0.0 and 1.0 inclusive. Got {}".format(p))
+
         self.p = Parameter(torch.tensor(p, dtype=torch.float32))
         self.p.requires_grad = False
 
     def forward(self, student_in, teacher_in):
+        """
+        """
         if self.training:
             assert student_in.shape == teacher_in.shape
-            return self.p * student_in + (1 - self.p) * teacher_in
+            common_shape = student_in.shape
+            # Generate mask
+            rand_tensor = torch.rand(common_shape).to(student_in.device)
+            swapping_mask = torch.zeros(common_shape).to(student_in.device)
+            swapping_mask[rand_tensor <= self.p] = 1
+            staying_mask = torch.abs(swapping_mask - 1)
+            del rand_tensor
+
+            # Create two output tensors
+            return swapping_mask * student_in + staying_mask * teacher_in
         else:
             return student_in
 
@@ -78,7 +123,7 @@ class InterpolationScheduler:
 
         # Number of steps for for each interpolation module
         self.max_prob = max_prob
-        self.per_level_annealing_steps = math.ceil((num_interpolation_steps - 1) * per_level_annealing_duration)
+        self.per_level_annealing_steps = max(math.ceil((num_interpolation_steps - 1) * per_level_annealing_duration), 1)
         self.step_size = step_size
         self.slopes = [(self.max_prob - self.modules[i].p.item()) / self.per_level_annealing_steps * self.step_size for i in range(len(self.modules))]
 
@@ -154,7 +199,17 @@ class InterpolationBartDecoder(BartDecoder):
         self.student_layernorm_embedding = nn.LayerNorm(config.d_model)
 
         # Interpolation modules
-        self.interpolation_modules = nn.ModuleList([LinearInterpolationModule(p=config.interpolation_p) for _ in range(self.student_decoder_layers)])
+        assert config.interpolation_type in ["stochastic", "linear"]
+        if config.interpolation_type == "stochastic":
+            self.interpolation_modules = nn.ModuleList([
+                StochasticInterpolationModule(p=config.interpolation_p, learnable_p=config.learnable_p)
+                for _ in range(self.student_decoder_layers)
+            ])
+        else:
+            self.interpolation_modules = nn.ModuleList([
+                LinearInterpolationModule(p=config.interpolation_p, learnable_p=config.learnable_p)
+                for _ in range(self.student_decoder_layers)
+            ])
         assert len(self.student_layers) == len(self.interpolation_modules)
 
     def load_weights_to_student(self):
@@ -283,6 +338,7 @@ class InterpolationBartDecoder(BartDecoder):
 
         if self.training:
             student_index = 0
+            teacher_hidden_states = []
             for idx, decoder_layer in enumerate(self.layers):
                 # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
                 if output_hidden_states:
@@ -363,10 +419,17 @@ class InterpolationBartDecoder(BartDecoder):
                     student_hidden_states = student_layer_outputs[0]
                 hidden_states = layer_outputs[0]
 
+                # Add teacher hidden states to the list
+                teacher_hidden_states.append(hidden_states)
+
                 # Interpolation
                 if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx:
                     interpolation_module = self.interpolation_modules[student_index]
-                    interpolation_output = interpolation_module(student_in=student_hidden_states, teacher_in=hidden_states)
+
+                    # Randomly select a previous teacher hidden states (including this one) to swap
+                    teacher_swap_states = random.choice(teacher_hidden_states)
+
+                    interpolation_output = interpolation_module(student_in=student_hidden_states, teacher_in=teacher_swap_states)
                     student_hidden_states = interpolation_output
                     hidden_states = interpolation_output
 
@@ -379,8 +442,9 @@ class InterpolationBartDecoder(BartDecoder):
                         if encoder_hidden_states is not None:
                             all_cross_attentions += (student_layer_outputs[2],)
 
-                    # At this point, all computations for the student are done. Increase the student index by 1
+                    # At this point, all computations for the student are done. Increase the student index by 1 and clear the list
                     student_index += 1
+                    teacher_hidden_states.clear()
         else:
             # If the model is in eval mode, we only compute through the student layers to reduce unnecessary
             # computations with the teacher

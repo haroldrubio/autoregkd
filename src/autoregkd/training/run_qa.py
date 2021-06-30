@@ -49,8 +49,6 @@ from datasets import load_dataset, load_metric
 with FileLock(".lock") as lock:
     nltk.download("punkt", quiet=True)
 
-os.environ['WANDB_PROJECT'] = 'interpolation_question_answering'
-
 logger = logging.getLogger(__name__)
 
 
@@ -94,7 +92,7 @@ class ModelArguments:
     )
 
     student_decoder_layer_indices: Tuple = field(
-        default=(0, 6, 11),
+        default=(3, 7, 11),
         metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
     )
 
@@ -147,10 +145,25 @@ class ModelArguments:
     # --------------------------------------- #
     # Interpolation-specific hyper-parameters #
     # --------------------------------------- #
+    interpolation_type: Optional[str] = field(
+        default="stochastic",
+        metadata={"help": "Type of interpolation. Must be either stochastic or linear"}
+    )
+
     num_interpolation_epochs: Optional[int] = field(
         default=5,
         metadata={"help": "Number of interpolation epochs. Must be at most the total number of training epochs."
                           "Default to 5"}
+    )
+
+    learnable_p: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to make p learnable. If set to True, interpolation scheduler becomes unncessary"}
+    )
+
+    alpha_p: Optional[float] = field(
+        default=None,
+        metadata={"help": "Regularization factor to encourage p to be high (close to 1)"}
     )
 
     interpolation_p: Optional[float] = field(
@@ -315,6 +328,20 @@ def main():
         training_args.fp16 = False
         logger.info("Mixed precision training disabled.")
 
+    # Update output dir if necessary
+    if data_args.use_v2:
+        training_args.output_dir += "squadv2/"
+        logger.info("Using SQuADv2.0")
+    else:
+        training_args.output_dir += "squadv1/"
+        logger.info("Using SQuADv1.1")
+    if model_args.model_type == "interpolation":
+        training_args.output_dir += "minp_{}_maxp_{}_plad_{}_step_{}_seed_{}/".format(model_args.interpolation_p,
+                                                                                      model_args.max_prob,
+                                                                                      model_args.per_level_annealing_duration,
+                                                                                      model_args.step_size,
+                                                                                      training_args.seed)
+
     # Detect and get last checkpoint
     last_checkpoint = None
     if os.path.isdir(
@@ -330,20 +357,6 @@ def main():
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
-
-    # Update output dir if necessary
-    if data_args.use_v2:
-        training_args.output_dir += "squadv2/"
-        logger.info("Using SQuADv2.0")
-    else:
-        training_args.output_dir += "squadv1/"
-        logger.info("Using SQuADv1.1")
-    if model_args.model_type == "interpolation":
-        training_args.output_dir += "minp_{}_maxp_{}_plad_{}_step_{}_seed_{}/".format(model_args.interpolation_p,
-                                                                                      model_args.max_prob,
-                                                                                      model_args.per_level_annealing_duration,
-                                                                                      model_args.step_size,
-                                                                                      training_args.seed)
 
     # Set seed for replicability
     set_seed(training_args.seed)
@@ -471,13 +484,14 @@ def main():
         student_config = DistilBartConfig(
             student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
             student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
+            interpolation_type=model_args.interpolation_type,
+            learnable_p=model_args.learnable_p,
             interpolation_p=model_args.interpolation_p,
             **teacher_config
         )
 
         teacher_model = None
-        student_model = InterpolationBartForQuestionAnswering.from_pretrained(model_args.model_name,
-                                                                              config=student_config)
+        student_model = InterpolationBartForQuestionAnswering.from_pretrained(model_args.model_name, config=student_config)
         student_model.load_weights_to_student()
         student_model.freeze_weights(freeze_embedding=model_args.freeze_embedding,
                                      freeze_encoder=model_args.freeze_encoder,
@@ -752,10 +766,8 @@ def main():
     # Eval steps (should be ~4 times per epoch)
     if training_args.do_train:
         if training_args.do_eval:
-            training_args.eval_steps = max(round(len(
-                train_dataset) / training_args.train_batch_size / data_args.num_evals_per_epoch / training_args.gradient_accumulation_steps),
-                                           1)
-            training_args.logger_steps = 1
+            training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / data_args.num_evals_per_epoch / training_args.gradient_accumulation_steps), 1)
+            training_args.logger_steps = training_args.eval_steps
             training_args.save_steps = training_args.eval_steps
             logger.info("Evaluate every {} steps, or {} times per epoch".format(training_args.eval_steps,
                                                                                 data_args.num_evals_per_epoch))
@@ -806,6 +818,8 @@ def main():
             post_process_function=postprocess_squad,
             compute_metrics=compute_metrics,
             num_interpolation_epochs=model_args.num_interpolation_epochs,
+            learnable_p=model_args.learnable_p,
+            alpha_p=model_args.alpha_p,
             max_prob=model_args.max_prob,
             per_level_annealing_duration=model_args.per_level_annealing_duration,
             step_size=model_args.step_size

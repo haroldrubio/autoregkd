@@ -8,16 +8,19 @@ run_qa --model_type interpolation \
        --task question-answering \
        --dataset_name squad \
        --use_v2 True \
-       --fp16 False \
+       --fp16 True \
        --fp16_opt_level O1 \
        --learning_rate 5e-5 \
-       --warmup_steps 500 \
        --gradient_accumulation_steps 4 \
+       --eval_accumulation_steps 250 \
        --use_kd_loss False \
        --alpha_data 1.0 \
        --alpha_logits 0.8 \
        --alpha_hidden 3.0 \
+       --interpolation_type stochastic \
        --interpolation_p 0.0 \
+       --learnable_p False \
+       --alpha_p 0.0 \
        --max_prob 1.0 \
        --per_level_annealing_duration 0.3 \
        --step_size 2 \
@@ -30,12 +33,12 @@ run_qa --model_type interpolation \
        --n_best_size 20 \
        --max_answer_length 30 \
        --null_score_diff_threshold 0.0 \
-       --per_device_train_batch_size 16 \
+       --per_device_train_batch_size 4 \
        --per_device_eval_batch_size 4 \
        --do_train \
        --do_eval \
-       --num_interpolation_epochs 2 \
-       --num_train_epochs 5 \
+       --num_interpolation_epochs 3 \
+       --num_train_epochs 3 \
        --evaluation_strategy steps \
        --num_evals_per_epoch 4 \
        --save_total_limit 5 \

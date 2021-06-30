@@ -56,7 +56,7 @@ for p in bart_model.model.decoder.parameters():
     print(p.requires_grad)
     break
 print(len(bart_model.model.decoder.layers))
-"""
+
 from autoregkd.models.interpolation.modeling_interpolation import LinearInterpolationModule, InterpolationScheduler
 
 class WrapperModule(nn.Module):
@@ -94,4 +94,8 @@ for i in range(30):
     for j, m in enumerate(sch.modules):
         print("Module {}: {}".format(j, m.p.data))
     sch.step()
+    
+"""
+print(torch.tensor(0.5))
+print(torch.normal(mean=0, std=0.5, size=()).item())
 

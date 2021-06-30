@@ -1,5 +1,5 @@
 program: scripts/run_qa.py
-project: interpolation_question_answering_random_layer_disjoint
+project: interpolation_question_answering_learnable
 command:
   - ${env}
   - ${interpreter}
@@ -16,8 +16,8 @@ command:
   - "--fp16_opt_level=O1"
   - "--gradient_accumulation_steps=8"
   - "--eval_accumulation_steps=200"
-  - "--interpolation_type=stochastic"
-  - "--learnable_p=False"
+  - "--interpolation_type=linear"
+  - "--learnable_p=True"
   - "--freeze_embedding=True"
   - "--freeze_encoder=True"
   - "--freeze_qa_head=False"
@@ -30,8 +30,8 @@ command:
   - "--per_device_eval_batch_size=4"
   - "--do_train"
   - "--do_eval"
-  - "--num_interpolation_epochs=3"
-  - "--num_train_epochs=4"
+  - "--num_interpolation_epochs=4"
+  - "--num_train_epochs=5"
   - "--evaluation_strategy=steps"
   - "--num_evals_per_epoch=4"
   - "--save_total_limit=1"
@@ -52,17 +52,10 @@ parameters:
     max: -8
     min: -12
   interpolation_p:
-    value:
-      0.0
-  max_prob:
     distribution: uniform
     max: 1.0
-    min: 0.1
-  per_level_annealing_duration:
+    min: 0.0
+  alpha_p:
     distribution: uniform
-    max: 1.0
-    min: 0.1
-  step_size:
-    distribution: int_uniform
-    max: 50
-    min: 1
+    max: 10.0
+    min: 0.0

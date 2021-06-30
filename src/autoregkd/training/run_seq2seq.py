@@ -48,8 +48,6 @@ from datasets import load_dataset, load_metric
 with FileLock(".lock") as lock:
     nltk.download("punkt", quiet=True)
 
-os.environ['WANDB_PROJECT'] = 'interpolation_xsum'
-
 logger = logging.getLogger(__name__)
 
 
@@ -298,6 +296,13 @@ def main():
         training_args.fp16 = False
         logger.info("Mixed precision training disabled.")
 
+    if model_args.model_type == "interpolation":
+        training_args.output_dir += "minp_{}_maxp_{}_plad_{}_step_{}_seed_{}/".format(model_args.interpolation_p,
+                                                                                      model_args.max_prob,
+                                                                                      model_args.per_level_annealing_duration,
+                                                                                      model_args.step_size,
+                                                                                      training_args.seed)
+
     # Detect and get last checkpoint
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -312,13 +317,6 @@ def main():
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
-
-    if model_args.model_type == "interpolation":
-        training_args.output_dir += "minp_{}_maxp_{}_plad_{}_step_{}_seed_{}/".format(model_args.interpolation_p,
-                                                                                      model_args.max_prob,
-                                                                                      model_args.per_level_annealing_duration,
-                                                                                      model_args.step_size,
-                                                                                      training_args.seed)
 
     # Set seed for replicability
     set_seed(training_args.seed)
