@@ -1,4 +1,4 @@
-program: src/autoregkd/training/run_qa.py
+program: run_experiment.py
 project: interpolation_qa
 command:
   - ${env}
