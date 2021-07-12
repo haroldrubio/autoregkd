@@ -16,7 +16,6 @@ command:
   - "--fp16_opt_level=O1"
   - "--gradient_accumulation_steps=8"
   - "--eval_accumulation_steps=200"
-  - "--interpolation_type=stochastic"
   - "--learnable_p=False"
   - "--freeze_embedding=True"
   - "--freeze_encoder=True"
@@ -37,16 +36,26 @@ command:
   - "--save_total_limit=1"
   - "--load_best_model_at_end=True"
   - "--metric_for_best_model=f1"
+  - "--seed=42"
   - ${args}
 method: bayes
 metric:
   goal: maximize
   name: 'eval/f1'
 parameters:
-  seed:
-    distribution: int_uniform
-    max: 1000
-    min: 1
+  layer_selection:
+    distribution: categorical
+    values:
+    - last
+    - prev
+    - disjoint
+    - random
+  interpolation_type:
+    distribution: categorical
+    values:
+    - stochastic
+    - random-stochastic
+    - theseus
   learning_rate:
     distribution: log_uniform
     max: -8

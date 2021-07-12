@@ -7,6 +7,7 @@ class DistilBartConfig(BartConfig):
                  student_encoder_layer_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
                  student_decoder_layer_indices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
                  interpolation_type="stochastic",
+                 layer_selection="last",
                  learnable_p=False,
                  interpolation_p=0.0,
                  **kwargs
@@ -25,6 +26,7 @@ class DistilBartConfig(BartConfig):
         self.interpolation_type = interpolation_type
         # Whether to make p learnable
         self.learnable_p = learnable_p
-
+        # Layer selection method
+        self.layer_selection = layer_selection
         # Starting interpolation probability. This is only used by interpolation models
         self.interpolation_p = interpolation_p

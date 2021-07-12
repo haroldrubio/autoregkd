@@ -147,7 +147,12 @@ class ModelArguments:
     # --------------------------------------- #
     interpolation_type: Optional[str] = field(
         default="stochastic",
-        metadata={"help": "Type of interpolation. Must be either stochastic or linear"}
+        metadata={"help": "Type of interpolation. Must be [stochastic, random-stochastic, theseus]"}
+    )
+
+    layer_selection: Optional[str] = field(
+        default="prev",
+        metadata={"help": "Type of interpolation. Must be [last, prev, disjoin, random]"}
     )
 
     num_interpolation_epochs: Optional[int] = field(
@@ -485,6 +490,7 @@ def main():
             student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
             student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
             interpolation_type=model_args.interpolation_type,
+            layer_selection=model_args.layer_selection,
             learnable_p=model_args.learnable_p,
             interpolation_p=model_args.interpolation_p,
             **teacher_config

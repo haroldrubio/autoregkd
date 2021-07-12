@@ -66,7 +66,32 @@ class LinearInterpolationModule(nn.Module):
         else:
             return student_in
 
+class TheseusInterpolationModule(nn.Module):
+    """
+    This module contains no parameters and performs a swapping operation on the hidden unit level
+    between two inputs of the same shape
+    """
+    def __init__(self,
+                 p: float = 0.0,
+                 learnable_p: bool = False):
+        super().__init__()
+        if p < 0.0 or p > 1.0:
+            raise ValueError("p must be between 0.0 and 1.0 inclusive. Got {}".format(p))
+        self.p = Parameter(torch.tensor(p, dtype=torch.float32))
+        self.p.requires_grad = False
 
+    def forward(self, student_in, teacher_in):
+        """
+        """
+        if self.training:
+            assert student_in.shape == teacher_in.shape
+            coin = random.random()
+            if coin <= self.p:
+                return teacher_in
+            else:
+                return student_in
+        else:
+            return student_in
 class StochasticInterpolationModule(nn.Module):
     """
     This module contains no parameters and performs a swapping operation on the hidden unit level
@@ -87,6 +112,45 @@ class StochasticInterpolationModule(nn.Module):
         """
         if self.training:
             assert student_in.shape == teacher_in.shape
+            common_shape = student_in.shape
+            # Generate mask
+            rand_tensor = torch.rand(common_shape).to(student_in.device)
+            swapping_mask = torch.zeros(common_shape).to(student_in.device)
+            swapping_mask[rand_tensor <= self.p] = 1
+            staying_mask = torch.abs(swapping_mask - 1)
+            del rand_tensor
+
+            # Create two output tensors
+            return swapping_mask * student_in + staying_mask * teacher_in
+        else:
+            return student_in
+
+class RandomStochasticInterpolationModule(nn.Module):
+    """
+    Performs the same as stochastic interpolation except it scrambles the dimensions 
+    of the teacher
+    """
+    def __init__(self,
+                 p: float = 0.0,
+                 learnable_p: bool = False):
+        super().__init__()
+        if p < 0.0 or p > 1.0:
+            raise ValueError("p must be between 0.0 and 1.0 inclusive. Got {}".format(p))
+
+        self.p = Parameter(torch.tensor(p, dtype=torch.float32))
+        self.p.requires_grad = False
+
+    def forward(self, student_in, teacher_in):
+        """
+        """
+        if self.training:
+            assert student_in.shape == teacher_in.shape
+            # Scrambling dimensions
+            _, _, hid_dim = teacher_in.shape
+            idxs = torch.tensor(random.sample(range(hid_dim), k=hid_dim), dtype=torch.long)
+            last_dim = len(teacher_in.shape) - 1
+
+            teacher_in = torch.index_select(teacher_in, last_dim, idxs)
             common_shape = student_in.shape
             # Generate mask
             rand_tensor = torch.rand(common_shape).to(student_in.device)
@@ -199,15 +263,19 @@ class InterpolationBartDecoder(BartDecoder):
         self.student_layernorm_embedding = nn.LayerNorm(config.d_model)
 
         # Interpolation modules
-        assert config.interpolation_type in ["stochastic", "linear"]
         if config.interpolation_type == "stochastic":
             self.interpolation_modules = nn.ModuleList([
                 StochasticInterpolationModule(p=config.interpolation_p, learnable_p=config.learnable_p)
                 for _ in range(self.student_decoder_layers)
             ])
-        else:
+        elif config.interpolation_type == "random-stochastic":
             self.interpolation_modules = nn.ModuleList([
-                LinearInterpolationModule(p=config.interpolation_p, learnable_p=config.learnable_p)
+                RandomStochasticInterpolationModule(p=config.interpolation_p, learnable_p=config.learnable_p)
+                for _ in range(self.student_decoder_layers)
+            ])
+        elif config.interpolation_type == "theseus":
+            self.interpolation_modules = nn.ModuleList([
+                TheseusInterpolationModule(p=config.interpolation_p, learnable_p=config.learnable_p)
                 for _ in range(self.student_decoder_layers)
             ])
         assert len(self.student_layers) == len(self.interpolation_modules)
@@ -365,7 +433,7 @@ class InterpolationBartDecoder(BartDecoder):
 
                         return custom_forward
 
-                    if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx:
+                    if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx and self.config.layer_selection != 'random':
                         student_decoder_layer = self.student_layers[student_index]
                         student_layer_outputs = torch.utils.checkpoint.checkpoint(
                             create_custom_forward(student_decoder_layer),
@@ -389,7 +457,7 @@ class InterpolationBartDecoder(BartDecoder):
                         None,
                     )
                 else:
-                    if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx:
+                    if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx and self.config.layer_selection != 'random':
                         student_decoder_layer = self.student_layers[student_index]
                         student_layer_outputs = student_decoder_layer(
                             student_hidden_states,
@@ -423,11 +491,21 @@ class InterpolationBartDecoder(BartDecoder):
                 teacher_hidden_states.append(hidden_states)
 
                 # Interpolation
-                if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx:
+                if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx and self.config.layer_selection != 'random':
                     interpolation_module = self.interpolation_modules[student_index]
 
-                    # Randomly select a previous teacher hidden states (including this one) to swap
-                    teacher_swap_states = random.choice(teacher_hidden_states)
+                    # TODO: This needs to be changed if moving from BART
+                    num_teacher_layers = 12
+                    # Last hidden state
+                    if self.config.layer_selection == "last":
+                        teacher_swap_states = teacher_hidden_states[len(teacher_hidden_states) - 1]
+                    # All previous hidden states
+                    elif self.config.layer_selection == "prev":
+                        teacher_swap_states = random.choice(teacher_hidden_states)
+                    # Disjoint Subsets
+                    elif self.config.layer_selection == "disjoint":
+                        ratio = num_teacher_layers / self.config.student_decoder_layers
+                        teacher_swap_states = random.choice(teacher_hidden_states[max(0, len(teacher_hidden_states) - ratio):])
 
                     interpolation_output = interpolation_module(student_in=student_hidden_states, teacher_in=teacher_swap_states)
                     student_hidden_states = interpolation_output
@@ -444,7 +522,6 @@ class InterpolationBartDecoder(BartDecoder):
 
                     # At this point, all computations for the student are done. Increase the student index by 1 and clear the list
                     student_index += 1
-                    teacher_hidden_states.clear()
         else:
             # If the model is in eval mode, we only compute through the student layers to reduce unnecessary
             # computations with the teacher
@@ -471,6 +548,50 @@ class InterpolationBartDecoder(BartDecoder):
                 )
 
                 student_hidden_states = student_layer_outputs[0]
+
+                if use_cache:
+                    next_decoder_cache += (student_layer_outputs[3 if output_attentions else 1],)
+
+                if output_attentions:
+                    all_self_attns += (student_layer_outputs[1],)
+
+                    if encoder_hidden_states is not None:
+                        all_cross_attentions += (student_layer_outputs[2],)
+
+        if self.config.layer_selection == 'random' and self.training:
+            # Random layer selection: perform interpolation with random selection from teacher
+            # TODO:
+            for idx, student_decoder_layer in enumerate(self.student_layers):
+                # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+                if output_hidden_states:
+                    all_hidden_states += (student_hidden_states,)
+                dropout_probability = random.uniform(0, 1)
+                if self.training and (dropout_probability < self.layerdrop):
+                    continue
+
+                past_key_value = past_key_values[idx] if past_key_values is not None else None
+
+                student_layer_outputs = student_decoder_layer(
+                    student_hidden_states,
+                    attention_mask=student_attention_mask,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    encoder_layer_head_mask=(encoder_head_mask[idx] if encoder_head_mask is not None else None),
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                )
+
+                student_hidden_states = student_layer_outputs[0]
+
+                interpolation_module = self.interpolation_modules[idx]
+
+                # Random selection
+                teacher_swap_states = random.choice(teacher_hidden_states)
+
+                interpolation_output = interpolation_module(student_in=student_hidden_states, teacher_in=teacher_swap_states)
+                student_hidden_states = interpolation_output
 
                 if use_cache:
                     next_decoder_cache += (student_layer_outputs[3 if output_attentions else 1],)
