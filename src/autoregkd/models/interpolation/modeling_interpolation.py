@@ -147,7 +147,7 @@ class RandomStochasticInterpolationModule(nn.Module):
             assert student_in.shape == teacher_in.shape
             # Scrambling dimensions
             _, _, hid_dim = teacher_in.shape
-            idxs = torch.tensor(random.sample(range(hid_dim), k=hid_dim), dtype=torch.long)
+            idxs = torch.tensor(random.sample(range(hid_dim), k=hid_dim), dtype=torch.long, device=teacher_in.device)
             last_dim = len(teacher_in.shape) - 1
 
             teacher_in = torch.index_select(teacher_in, last_dim, idxs)
@@ -483,7 +483,7 @@ class InterpolationBartDecoder(BartDecoder):
                         use_cache=use_cache,
                     )
 
-                if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx:
+                if student_index < self.student_decoder_layers and self.student_layer_indices[student_index] == idx and self.config.layer_selection != 'random':
                     student_hidden_states = student_layer_outputs[0]
                 hidden_states = layer_outputs[0]
 
