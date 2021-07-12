@@ -1,4 +1,4 @@
-program: scripts/run_qa.py
+program: src/autoregkd/training/run_qa.py
 project: interpolation_qa
 command:
   - ${env}
@@ -29,8 +29,8 @@ command:
   - "--per_device_eval_batch_size=4"
   - "--do_train"
   - "--do_eval"
-  - "--num_interpolation_epochs=3"
-  - "--num_train_epochs=4"
+  - "--num_interpolation_epochs=1"
+  - "--num_train_epochs=1"
   - "--evaluation_strategy=steps"
   - "--num_evals_per_epoch=4"
   - "--save_total_limit=1"
