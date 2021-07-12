@@ -504,8 +504,8 @@ class InterpolationBartDecoder(BartDecoder):
                         teacher_swap_states = random.choice(teacher_hidden_states)
                     # Disjoint Subsets
                     elif self.config.layer_selection == "disjoint":
-                        ratio = num_teacher_layers / self.config.student_decoder_layers
-                        teacher_swap_states = random.choice(teacher_hidden_states[max(0, len(teacher_hidden_states) - ratio):])
+                        ratio = int(num_teacher_layers / self.config.student_decoder_layers)
+                        teacher_swap_states = random.choice(teacher_hidden_states[int(max(0, len(teacher_hidden_states) - ratio)):])
 
                     interpolation_output = interpolation_module(student_in=student_hidden_states, teacher_in=teacher_swap_states)
                     student_hidden_states = interpolation_output
