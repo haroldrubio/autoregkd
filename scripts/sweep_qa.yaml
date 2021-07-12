@@ -1,5 +1,5 @@
 program: scripts/run_qa.py
-project: interpolation_question_answering_random_layer_disjoint
+project: interpolation_qa
 command:
   - ${env}
   - ${interpreter}
