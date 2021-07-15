@@ -1,0 +1,67 @@
+program: run_experiment.py
+project: interpolation_qa
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--model_type=interpolation"
+  - "--output_dir=./model_outputs/interpolation_outputs/"
+  - "--overwrite_output_dir=True"
+  - "--model_name=Primer/bart-squad2"
+  - "--tokenizer_name=Primer/bart-squad2"
+  - "--task=question-answering"
+  - "--dataset_name=squad"
+  - "--use_v2=True"
+  - "--fp16=True"
+  - "--fp16_opt_level=O1"
+  - "--gradient_accumulation_steps=8"
+  - "--eval_accumulation_steps=200"
+  - "--learnable_p=False"
+  - "--freeze_embedding=True"
+  - "--freeze_encoder=True"
+  - "--freeze_qa_head=False"
+  - "--max_seq_length=384"
+  - "--doc_stride=128"
+  - "--n_best_size=20"
+  - "--max_answer_length=30"
+  - "--null_score_diff_threshold=0.0"
+  - "--per_device_train_batch_size=4"
+  - "--per_device_eval_batch_size=4"
+  - "--do_train"
+  - "--do_eval"
+  - "--num_interpolation_epochs=1"
+  - "--num_train_epochs=1"
+  - "--evaluation_strategy=steps"
+  - "--num_evals_per_epoch=4"
+  - "--logging_steps=50"
+  - "--save_total_limit=1"
+  - "--load_best_model_at_end=True"
+  - "--metric_for_best_model=f1"
+  - "--seed=42"
+  - "--interpolation_type=random-stochastic"
+  - "--layer_selection=disjoint"
+  - ${args}
+method: bayes
+metric:
+  goal: maximize
+  name: 'eval/f1'
+parameters:
+  learning_rate:
+    distribution: log_uniform
+    max: -8
+    min: -12
+  interpolation_p:
+    value:
+      0.0
+  max_prob:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  per_level_annealing_duration:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  step_size:
+    distribution: int_uniform
+    max: 50
+    min: 1
