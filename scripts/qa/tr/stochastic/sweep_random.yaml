@@ -1,5 +1,5 @@
 program: run_experiment.py
-project: interpolation_qa
+project: interpolation_qa_tr
 command:
   - ${env}
   - ${interpreter}
