@@ -39,7 +39,7 @@ command:
   - "--interpolation_type=stochastic"
   - "--layer_selection=last"
   - "--max_prob=0.969"
-  - "--per_level_annealing_duration==0.647"
+  - "--per_level_annealing_duration=0.647"
   - "--step_size=18"
   - ${args}
 method: bayes
