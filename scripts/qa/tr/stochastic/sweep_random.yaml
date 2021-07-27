@@ -30,7 +30,7 @@ command:
   - "--do_train"
   - "--do_eval"
   - "--num_interpolation_epochs=1"
-  - "--num_train_epochs=1"
+  - "--num_train_epochs=3"
   - "--evaluation_strategy=steps"
   - "--num_evals_per_epoch=4"
   - "--logging_steps=50"
@@ -38,6 +38,9 @@ command:
   - "--seed=42"
   - "--interpolation_type=stochastic"
   - "--layer_selection=random"
+  - "--max_prob=0.969"
+  - "--per_level_annealing_duration=0.647"
+  - "--step_size=18"
   - ${args}
 method: bayes
 metric:
@@ -51,15 +54,3 @@ parameters:
   interpolation_p:
     value:
       0.0
-  max_prob:
-    distribution: uniform
-    max: 1.0
-    min: 0.1
-  per_level_annealing_duration:
-    distribution: uniform
-    max: 1.0
-    min: 0.1
-  step_size:
-    distribution: int_uniform
-    max: 50
-    min: 1

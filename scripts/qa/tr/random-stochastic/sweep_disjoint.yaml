@@ -54,15 +54,3 @@ parameters:
   interpolation_p:
     value:
       0.0
-  max_prob:
-    distribution: uniform
-    max: 1.0
-    min: 0.1
-  per_level_annealing_duration:
-    distribution: uniform
-    max: 1.0
-    min: 0.1
-  step_size:
-    distribution: int_uniform
-    max: 50
-    min: 1
