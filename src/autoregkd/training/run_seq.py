@@ -428,6 +428,7 @@ def main():
 
     tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
     assert isinstance(tokenizer, transformers.PreTrainedTokenizerFast)
+    two_classes = ['cola', 'rte']
 
     def freeze_weights(module: nn.Module):
         """
@@ -455,7 +456,7 @@ def main():
         })
 
         # Hard code task specific params
-        if data_args.task_name == 'cola':
+        if data_args.task_name in two_classes:
             teacher_config['num_labels'] = 2
 
         # DistilBART configuration
@@ -505,7 +506,7 @@ def main():
 
         teacher_config = BartConfig.from_pretrained(model_args.model_name).to_diff_dict()
         # Hard code task specific params
-        if data_args.task_name == 'cola':
+        if data_args.task_name in two_classes:
             teacher_config['num_labels'] = 2
             teacher_config['_num_labels'] = 2
             teacher_config['label2id'] = {
