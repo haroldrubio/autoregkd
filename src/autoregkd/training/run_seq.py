@@ -516,8 +516,7 @@ def main():
                 '0': 'LABEL_0',
                 '1': 'LABEL_1'
             }
-        print(teacher_config)
-        sys.exit(1)
+
         student_config = DistilBartConfig(
             student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
             student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
