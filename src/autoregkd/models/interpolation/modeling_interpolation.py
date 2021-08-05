@@ -10,7 +10,8 @@ from torch.nn.parameter import Parameter
 from transformers import (
     BartConfig,
     BartForQuestionAnswering,
-    BartForConditionalGeneration
+    BartForConditionalGeneration,
+    BartForSequenceClassification
 )
 from transformers.models.bart.modeling_bart import (
     BartLearnedPositionalEmbedding,
@@ -716,4 +717,25 @@ class InterpolationBartForConditionalGeneration(BartForConditionalGeneration):
         self.model.freeze_weights(freeze_embedding=freeze_embedding, freeze_encoder=freeze_encoder)
         if freeze_lm_head:
             for p in self.lm_head.parameters():
+                p.requires_grad = False
+
+class InterpolationBartForSequenceClassification(BartForSequenceClassification):
+    def __init__(self, config: DistilBartConfig):
+        super().__init__(config=config)
+        # Change the main model to the interpolation version, everything else stays the same
+        self.model = InterpolationBartModel(config=config)
+
+    def load_weights_to_student(self):
+        """
+        This method calls the load_weights_to_student of the main model
+        """
+        self.model.load_weights_to_student()
+
+    def freeze_weights(self,
+                       freeze_embedding: bool = True,
+                       freeze_encoder: bool = True,
+                       freeze_seq_head: bool = True):
+        self.model.freeze_weights(freeze_embedding=freeze_embedding, freeze_encoder=freeze_encoder)
+        if freeze_seq_head:
+            for p in self.classification_head.parameters():
                 p.requires_grad = False
