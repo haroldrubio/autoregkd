@@ -575,12 +575,12 @@ def main():
     # Some models have set the order of the labels to use, so let's make sure we do use it.
     label_to_id = None
     if (
-        model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
+        student_model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
         and data_args.task_name is not None
         and not is_regression
     ):
         # Some have all caps in their config, some don't.
-        label_name_to_id = {k.lower(): v for k, v in model.config.label2id.items()}
+        label_name_to_id = {k.lower(): v for k, v in student_model.config.label2id.items()}
         if list(sorted(label_name_to_id.keys())) == list(sorted(label_list)):
             label_to_id = {i: int(label_name_to_id[label_list[i]]) for i in range(num_labels)}
         else:
@@ -666,6 +666,16 @@ def main():
         data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8)
     else:
         data_collator = None
+
+    # Eval steps (should be ~4 times per epoch)
+    if training_args.do_train:
+        if training_args.do_eval:
+            training_args.eval_steps = max(round(len(train_dataset) / training_args.train_batch_size / data_args.num_evals_per_epoch / training_args.gradient_accumulation_steps), 1)
+            training_args.logger_steps = training_args.eval_steps
+            logger.info("Evaluate every {} steps, or {} times per epoch".format(training_args.eval_steps,
+                                                                                data_args.num_evals_per_epoch))
+        else:
+            training_args.evaluation_strategy = "no"
 
     # Initialize our Trainer
     trainer = Trainer(
