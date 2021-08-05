@@ -678,16 +678,46 @@ def main():
             training_args.evaluation_strategy = "no"
 
     # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        compute_metrics=compute_metrics,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-    )
+    if model_args.model_type == "huggingface" or model_args.model_type == "huggingface":
+        trainer = Trainer(
+            model=student_model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            compute_metrics=compute_metrics,
+            tokenizer=tokenizer,
+            data_collator=data_collator
+        )
+    else:
+        trainer = SequenceInterpolationTrainer(
+            model=student_model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            compute_metrics=compute_metrics,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            num_interpolation_epochs=model_args.num_interpolation_epochs,
+            learnable_p=model_args.learnable_p,
+            alpha_p=model_args.alpha_p,
+            max_prob=model_args.max_prob,
+            per_level_annealing_duration=model_args.per_level_annealing_duration,
+            step_size=model_args.step_size
+        )
 
+    '''
+    # Early-stopping callback
+    early_stopping = EarlyStoppingCallback(early_stopping_patience=4)
+    if model_args.model_type == "huggingface" or model_args.model_type == "distilbart":
+        # Add directly to the trainer
+        trainer.add_callback(early_stopping)
+    else:
+        # For interpolation models, we only add early stopping after the interpolation period is done
+        callback = AddAtEpochCallback(trainer=trainer,
+                                      num_interpolation_epochs=model_args.num_interpolation_epochs,
+                                      callback=early_stopping)
+        trainer.add_callback(callback)
+    '''
     # Training
     if training_args.do_train:
         checkpoint = None
