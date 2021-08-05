@@ -183,6 +183,112 @@ class ModelArguments:
         },
     )
 
+    student_encoder_layer_indices: Tuple = field(
+        default=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
+        metadata={"help": "Indices of layers to copy from the teacher model's encoder"}
+    )
+
+    student_decoder_layer_indices: Tuple = field(
+        default=(3, 7, 11),
+        metadata={"help": "Indices of layers to copy from the teacher model's decoder"}
+    )
+
+    freeze_encoder: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to freeze the encoder. Default to True"}
+    )
+
+    freeze_embedding: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to freeze the embeddings (including token embeddings and positional embeddings). "
+                          "Default to True"}
+    )
+
+    freeze_seq_head: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to freeze the sequence-classification task-specific linear layer. Default to True"}
+    )
+
+    # ----------------------------------------- #
+    # KD-specific (Distilbart) hyper-parameters #
+    # ----------------------------------------- #
+    use_kd_loss: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to add knowledge-distillation loss (logits and hidden loss). "
+                          "If False, the loss only includes data cross-entropy loss (same as SFT approach)"}
+    )
+
+    alpha_data: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "Weight for data loss. Default to 1.0"}
+    )
+
+    alpha_logits: Optional[float] = field(
+        default=0.0,
+        metadata={"help": "Weight for logits loss. Default to 0.0 (does not contribute to the total loss)"}
+    )
+
+    alpha_hidden: Optional[float] = field(
+        default=0.0,
+        metadata={"help": "Weight for hidden state loss. Default to 0.0 (does not contribute to the total loss)"}
+    )
+
+    normalize_hidden: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to normalize hidden states before computing the loss. "
+                          "Only useful if use KD loss and alpha_hidden greater than 0"}
+    )
+
+    # --------------------------------------- #
+    # Interpolation-specific hyper-parameters #
+    # --------------------------------------- #
+    interpolation_type: Optional[str] = field(
+        default="stochastic",
+        metadata={"help": "Type of interpolation. Must be [stochastic, random-stochastic, theseus]"}
+    )
+
+    layer_selection: Optional[str] = field(
+        default="prev",
+        metadata={"help": "Type of interpolation. Must be [last, prev, disjoin, random]"}
+    )
+
+    num_interpolation_epochs: Optional[int] = field(
+        default=5,
+        metadata={"help": "Number of interpolation epochs. Must be at most the total number of training epochs."
+                          "Default to 5"}
+    )
+
+    learnable_p: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to make p learnable. If set to True, interpolation scheduler becomes unncessary"}
+    )
+
+    alpha_p: Optional[float] = field(
+        default=None,
+        metadata={"help": "Regularization factor to encourage p to be high (close to 1)"}
+    )
+
+    interpolation_p: Optional[float] = field(
+        default=0.0,
+        metadata={"help": "Starting probability for interpolation modules. Default to 0.0"}
+    )
+
+    max_prob: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "Maximum possible probability for interpolation modules. Default to 1.0"}
+    )
+
+    per_level_annealing_duration: Optional[float] = field(
+        default=0.2,
+        metadata={"help": "How long each layer's annealing duration is, measure in fraction of the number of "
+                          "interpolation steps. Default to 0.2"}
+    )
+
+    step_size: Optional[int] = field(
+        default=1,
+        metadata={"help": "How often the scheduler should update (it update every `step_size` steps). "
+                          "Default to 1"}
+    )
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
