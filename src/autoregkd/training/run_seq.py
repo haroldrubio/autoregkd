@@ -159,7 +159,7 @@ class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-
+    
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
@@ -169,6 +169,14 @@ class ModelArguments:
     tokenizer_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
+
+    model_type: str = field(
+        default="interpolation",
+        metadata={"help": "Which type of model to use. Can choose among huggingface (HF's model for checkpoint "
+                          "evaluation), distilbart (Distilbart paper replication), "
+                          "and interpolation (Interpolation model)"}
+    )
+
     cache_dir: Optional[str] = field(
         default=None,
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
