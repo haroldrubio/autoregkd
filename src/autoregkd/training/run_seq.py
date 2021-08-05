@@ -515,7 +515,7 @@ def main():
         student_model.load_weights_to_student()
         student_model.freeze_weights(freeze_embedding=model_args.freeze_embedding,
                                      freeze_encoder=model_args.freeze_encoder,
-                                     freeze_qa_head=model_args.freeze_qa_head)
+                                     freeze_seq_head=model_args.freeze_seq_head)
 
         encoder_trainable_params = sum(p.numel() for p in student_model.model.encoder.parameters() if p.requires_grad)
         assert (
