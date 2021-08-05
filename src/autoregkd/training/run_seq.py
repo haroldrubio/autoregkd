@@ -21,7 +21,7 @@ import os
 import random
 import sys
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 from datasets import load_dataset, load_metric
@@ -39,13 +39,23 @@ from transformers import (
     TrainingArguments,
     default_data_collator,
     set_seed,
+    EarlyStoppingCallback,
+    BartConfig,
+    BartTokenizerFast,
+    BartForSequenceClassification
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
-from transformers.utils import check_min_version
 
+from ..models.distilbart.configuration_distilbart import DistilBartConfig
+from ..models.distilbart.modeling_distilbart import (
+    create_new_student,
+    copy_to_student
+)
+from ..models.interpolation.modeling_interpolation import InterpolationBartForSequenceClassification
 
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.5.0")
+from .trainer_seq import SequenceInterpolationTrainer
+from .utils import AddAtEpochCallback
+
 
 task_to_keys = {
     "cola": ("sentence", None),
