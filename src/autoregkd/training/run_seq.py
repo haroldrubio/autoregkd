@@ -132,6 +132,11 @@ class DataTrainingArguments:
     )
     test_file: Optional[str] = field(default=None, metadata={"help": "A csv or a json file containing the test data."})
 
+    num_evals_per_epoch: Optional[int] = field(
+        default=4,
+        metadata={"help": "Number of evaluations per epoch. Default to 4"}
+    )
+
     def __post_init__(self):
         if self.task_name is not None:
             self.task_name = self.task_name.lower()
