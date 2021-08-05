@@ -9,7 +9,7 @@ command:
   - "--overwrite_output_dir=True"
   - "--model_name=facebook/bart-large-mnli"
   - "--tokenizer_name=facebook/bart-large-mnli"
-  - "--task_name=mnli
+  - "--task_name=mnli"
   - "--fp16=True"
   - "--fp16_opt_level=O1"
   - "--gradient_accumulation_steps=8"
