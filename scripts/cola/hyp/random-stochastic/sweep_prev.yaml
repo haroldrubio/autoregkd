@@ -1,5 +1,5 @@
 program: run_cls.py
-project: interpolation_mnli
+project: interpolation_cola
 command:
   - ${env}
   - ${interpreter}
