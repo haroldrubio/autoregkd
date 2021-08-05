@@ -454,6 +454,10 @@ def main():
             "decoder_layers": len(list(model_args.student_decoder_layer_indices)),
         })
 
+        # Hard code task specific params
+        if data_args.task_name == 'cola':
+            teacher_config['num_labels'] = 2
+
         # DistilBART configuration
         student_config = DistilBartConfig(
             student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
@@ -500,6 +504,10 @@ def main():
                         "Setting number of interpolation epochs to number of training epochs")
 
         teacher_config = BartConfig().from_pretrained(model_args.model_name).to_diff_dict()
+        # Hard code task specific params
+        if data_args.task_name == 'cola':
+            teacher_config['num_labels'] = 2
+
         student_config = DistilBartConfig(
             student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
             student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
