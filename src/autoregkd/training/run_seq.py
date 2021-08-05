@@ -22,6 +22,7 @@ import random
 import sys
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
+from torch import nn
 
 import numpy as np
 from datasets import load_dataset, load_metric
@@ -415,29 +416,140 @@ def main():
     #
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        num_labels=num_labels,
-        finetuning_task=data_args.task_name,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
+    # BART tokenizer
+
+    tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
+    assert isinstance(tokenizer, transformers.PreTrainedTokenizerFast)
+
+    def freeze_weights(module: nn.Module):
+        """
+        Freeze the weights of a module to accelerate training
+        """
+        for param in module.parameters():
+            param.requires_grad = False
+
+    if model_args.model_type == "huggingface":
+        # Load a pre-trained checkpoint for BART
+        config = BartConfig().from_pretrained(model_args.model_name)
+        teacher_model = None
+        student_model = BartForSequenceClassification(config=config).from_pretrained(model_args.model_name).eval()
+
+    elif model_args.model_type == "distilbart":
+        # Create a DistilBart model with layers copied from the original BART model
+        # BART teacher model
+        teacher_model = BartForSequenceClassification.from_pretrained(model_args.model_name).eval()
+
+        # Extract the teacher's configuration
+        teacher_config = teacher_model.config.to_diff_dict()
+        teacher_config.update({
+            "encoder_layers": len(list(model_args.student_encoder_layer_indices)),
+            "decoder_layers": len(list(model_args.student_decoder_layer_indices)),
+        })
+
+        # DistilBART configuration
+        student_config = DistilBartConfig(
+            student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
+            student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
+            student_encoder_layers=len(list(model_args.student_encoder_layer_indices)),
+            student_decoder_layers=len(list(model_args.student_decoder_layer_indices)),
+            **teacher_config
+        )
+
+        # DistilBART model
+        student_model = create_new_student(teacher_model=teacher_model, config=student_config).eval()
+
+        assert (
+                len(student_model.model.encoder.layers) == len(list(model_args.student_encoder_layer_indices))
+                and len(student_model.model.decoder.layers) == len(list(model_args.student_decoder_layer_indices))
+        )
+
+        # Copy the weights
+        copy_to_student(teacher_model=teacher_model,
+                        student_model=student_model,
+                        config=student_config)
+
+        # Freeze shared embeddings
+        freeze_weights(student_model.model.shared)
+
+        # Freeze the decoder's positional and token embeddings
+        freeze_weights(student_model.model.encoder.embed_tokens)
+        freeze_weights(student_model.model.encoder.embed_positions)
+        freeze_weights(student_model.model.decoder.embed_tokens)
+        freeze_weights(student_model.model.decoder.embed_positions)
+
+        # Freeze the rest of encoder's parameters
+        freeze_weights(student_model.model.get_encoder())
+
+        encoder_trainable_params = sum(p.numel() for p in student_model.model.encoder.parameters() if p.requires_grad)
+        assert (
+                encoder_trainable_params == 0
+        ), "Expected the student's encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
+
+    elif model_args.model_type == "interpolation":
+        if model_args.num_interpolation_epochs > training_args.num_train_epochs:
+            model_args.num_interpolation_epochs = training_args.num_train_epochs
+            logger.info("Number of interpolation epochs exceeds number of training epochs. "
+                        "Setting number of interpolation epochs to number of training epochs")
+
+        teacher_config = BartConfig().from_pretrained(model_args.model_name).to_diff_dict()
+        student_config = DistilBartConfig(
+            student_encoder_layer_indices=list(model_args.student_encoder_layer_indices),
+            student_decoder_layer_indices=list(model_args.student_decoder_layer_indices),
+            interpolation_type=model_args.interpolation_type,
+            layer_selection=model_args.layer_selection,
+            learnable_p=model_args.learnable_p,
+            interpolation_p=model_args.interpolation_p,
+            **teacher_config
+        )
+
+        teacher_model = None
+        student_model = InterpolationBartForSequenceClassification.from_pretrained(model_args.model_name, config=student_config)
+        student_model.load_weights_to_student()
+        student_model.freeze_weights(freeze_embedding=model_args.freeze_embedding,
+                                     freeze_encoder=model_args.freeze_encoder,
+                                     freeze_qa_head=model_args.freeze_qa_head)
+
+        encoder_trainable_params = sum(p.numel() for p in student_model.model.encoder.parameters() if p.requires_grad)
+        assert (
+                encoder_trainable_params == 0
+        ), "Expected the encoder to be frozen. Got {} trainable parameters".format(encoder_trainable_params)
+
+        decoder_teacher_layers = [
+            student_model.model.decoder.embed_tokens,
+            student_model.model.decoder.embed_positions,
+            student_model.model.decoder.layers,
+            student_model.model.decoder.layernorm_embedding
+        ]
+        decoder_teacher_trainable_params = sum(
+            sum(p.numel() for p in l.parameters() if p.requires_grad) for l in decoder_teacher_layers
+        )
+        assert (
+                decoder_teacher_trainable_params == 0
+        ), "Expected the teacher's decoder to be frozen. Got {} trainable parameters".format(
+            decoder_teacher_trainable_params)
+
+        if model_args.freeze_embedding:
+            student_embedding_layers = [
+                student_model.model.decoder.student_embed_tokens,
+                student_model.model.decoder.student_embed_positions,
+                student_model.model.decoder.student_layernorm_embedding
+            ]
+            decoder_student_trainable_embed_params = sum(
+                sum(p.numel() for p in l.parameters() if p.requires_grad) for l in student_embedding_layers
+            )
+            assert (
+                    decoder_student_trainable_embed_params == 0
+            ), "Expected the student's decoder's embeddings to be frozen. Got {} trainable parameters" \
+                .format(decoder_student_trainable_embed_params)
+
+        if model_args.freeze_seq_head:
+            seq_head_trainable_params = sum(p.numel() for p in student_model.classification_head.parameters() if p.requires_grad)
+            assert (
+                    seq_head_trainable_params == 0
+            ), "Expected the QA head to be frozen. Got {} trainable parameters".format(seq_head_trainable_params)
+
+    else:
+        raise ValueError("Invalid model type - should be huggingface, distilbart, or interpolation")
 
     # Preprocessing the datasets
     if data_args.task_name is not None:
