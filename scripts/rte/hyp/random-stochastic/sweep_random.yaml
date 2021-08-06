@@ -35,7 +35,7 @@ command:
 method: bayes
 metric:
   goal: maximize
-  name: 'eval/f1'
+  name: 'eval/accuracy'
 parameters:
   learning_rate:
     distribution: log_uniform
