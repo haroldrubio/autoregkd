@@ -1,5 +1,5 @@
 program: run_cls.py
-project: interpolation_rte
+project: interpolation_mrpc
 command:
   - ${env}
   - ${interpreter}
@@ -7,9 +7,9 @@ command:
   - "--model_type=interpolation"
   - "--output_dir=./model_outputs/interpolation_outputs/"
   - "--overwrite_output_dir=True"
-  - "--model_name=textattack/facebook-bart-large-RTE"
-  - "--tokenizer_name=textattack/facebook-bart-large-RTE"
-  - "--task_name=rte"
+  - "--model_name=textattack/facebook-bart-large-MRPC"
+  - "--tokenizer_name=textattack/facebook-bart-large-MRPC"
+  - "--task_name=mrpc"
   - "--fp16=True"
   - "--fp16_opt_level=O1"
   - "--gradient_accumulation_steps=8"
