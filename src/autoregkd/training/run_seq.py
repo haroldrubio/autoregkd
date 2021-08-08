@@ -428,7 +428,7 @@ def main():
 
     tokenizer = BartTokenizerFast.from_pretrained(model_args.tokenizer_name)
     assert isinstance(tokenizer, transformers.PreTrainedTokenizerFast)
-    two_classes = ['cola', 'rte']
+    two_classes = ['cola', 'rte', 'mrpc']
 
     def freeze_weights(module: nn.Module):
         """

@@ -1,0 +1,62 @@
+program: run_cls.py
+project: interpolation_rte
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--model_type=interpolation"
+  - "--output_dir=./model_outputs/interpolation_outputs/"
+  - "--overwrite_output_dir=True"
+  - "--model_name=textattack/facebook-bart-large-RTE"
+  - "--tokenizer_name=textattack/facebook-bart-large-RTE"
+  - "--task_name=rte"
+  - "--fp16=True"
+  - "--fp16_opt_level=O1"
+  - "--gradient_accumulation_steps=8"
+  - "--eval_accumulation_steps=200"
+  - "--learnable_p=False"
+  - "--freeze_embedding=True"
+  - "--freeze_encoder=True"
+  - "--freeze_seq_head=False"
+  - "--max_seq_length=384"
+  - "--per_device_train_batch_size=2"
+  - "--per_device_eval_batch_size=2"
+  - "--do_train"
+  - "--do_eval"
+  - "--num_train_epochs=3"
+  - "--evaluation_strategy=steps"
+  - "--num_evals_per_epoch=4"
+  - "--logging_steps=50"
+  - "--save_total_limit=0"
+  - "--seed=42"
+  - "--interpolation_type=stochastic"
+  - "--layer_selection=last"
+  - ${args}
+method: bayes
+metric:
+  goal: maximize
+  name: 'eval/accuracy'
+parameters:
+  learning_rate:
+    distribution: log_uniform
+    max: -8
+    min: -12
+  interpolation_p:
+    value:
+      0.0
+  max_prob:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  per_level_annealing_duration:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  step_size:
+    distribution: int_uniform
+    max: 50
+    min: 1
+  num_interpolation_epochs:
+    distribution: int_uniform
+    max: 3
+    min: 1
