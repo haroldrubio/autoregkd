@@ -1,5 +1,5 @@
 program: run_experiment.py
-project: interpolation_qa_tr
+project: interpolation_qa_seed
 command:
   - ${env}
   - ${interpreter}
@@ -41,16 +41,13 @@ command:
   - "--max_prob=0.984"
   - "--per_level_annealing_duration=0.878"
   - "--step_size=43"
+  - "--learning_rate=5.4329575748308093e-05"
   - ${args}
-method: bayes
+method: random
 metric:
   goal: maximize
   name: 'eval/f1'
 parameters:
-  learning_rate:
-    distribution: log_uniform
-    max: -8
-    min: -12
   interpolation_p:
     value:
       0.0
