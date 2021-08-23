@@ -29,8 +29,7 @@ command:
   - "--per_device_eval_batch_size=4"
   - "--do_train"
   - "--do_eval"
-  - "--num_interpolation_epochs=1"
-  - "--num_train_epochs=1"
+  - "--num_train_epochs=3"
   - "--evaluation_strategy=steps"
   - "--num_evals_per_epoch=4"
   - "--logging_steps=50"
@@ -62,4 +61,8 @@ parameters:
   step_size:
     distribution: int_uniform
     max: 50
+    min: 1
+  num_interpolation_epochs:
+    distribution: int_uniform
+    max: 3
     min: 1
