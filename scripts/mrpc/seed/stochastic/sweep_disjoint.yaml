@@ -1,0 +1,42 @@
+program: run_cls.py
+project: interpolation_mrpc_seed
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--model_type=interpolation"
+  - "--output_dir=./model_outputs/interpolation_outputs/"
+  - "--overwrite_output_dir=True"
+  - "--model_name=textattack/facebook-bart-large-MRPC"
+  - "--tokenizer_name=textattack/facebook-bart-large-MRPC"
+  - "--task_name=mrpc"
+  - "--fp16=True"
+  - "--fp16_opt_level=O1"
+  - "--gradient_accumulation_steps=8"
+  - "--eval_accumulation_steps=200"
+  - "--learnable_p=False"
+  - "--freeze_embedding=True"
+  - "--freeze_encoder=True"
+  - "--freeze_seq_head=False"
+  - "--max_seq_length=384"
+  - "--per_device_train_batch_size=2"
+  - "--per_device_eval_batch_size=2"
+  - "--do_train"
+  - "--do_eval"
+  - "--num_train_epochs=3"
+  - "--evaluation_strategy=steps"
+  - "--num_evals_per_epoch=4"
+  - "--logging_steps=50"
+  - "--save_total_limit=0"
+  - "--seed=42"
+  - "--interpolation_type=stochastic"
+  - "--layer_selection=disjoint"
+  - ${args}
+method: random
+metric:
+  goal: maximize
+  name: 'eval/accuracy'
+parameters:
+  interpolation_p:
+    value:
+      0.0
