@@ -29,7 +29,6 @@ command:
   - "--per_device_eval_batch_size=4"
   - "--do_train"
   - "--do_eval"
-  - "--num_interpolation_epochs=1"
   - "--num_train_epochs=3"
   - "--evaluation_strategy=steps"
   - "--num_evals_per_epoch=4"
@@ -38,9 +37,6 @@ command:
   - "--seed=42"
   - "--interpolation_type=theseus"
   - "--layer_selection=random"
-  - "--max_prob=0.596"
-  - "--per_level_annealing_duration=0.823"
-  - "--step_size=35"
   - ${args}
 method: bayes
 metric:
@@ -54,3 +50,19 @@ parameters:
   interpolation_p:
     value:
       0.0
+  max_prob:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  per_level_annealing_duration:
+    distribution: uniform
+    max: 1.0
+    min: 0.1
+  step_size:
+    distribution: int_uniform
+    max: 50
+    min: 1
+  num_interpolation_epochs:
+    distribution: int_uniform
+    max: 3
+    min: 1
