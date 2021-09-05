@@ -11,6 +11,7 @@ from typing import Optional, Tuple
 from collections import defaultdict, OrderedDict
 
 import nltk
+import random
 import numpy as np
 from tqdm.auto import tqdm
 from filelock import FileLock
@@ -307,6 +308,9 @@ def main():
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+
+    # Override seed
+    training_args.seed = random.randint(1, 100000)
 
     # Setup logger
     logging.basicConfig(
