@@ -31,6 +31,11 @@ command:
   - "--seed=42"
   - "--interpolation_type=theseus"
   - "--layer_selection=prev"
+  - "--learning_rate=1.5349481502642623e-05"
+  - "--max_prob=0.44453591271363235"
+  - "--num_interpolation_epochs=2"
+  - "--per_level_annealing_duration=0.26729877422375137"
+  - "--step_size=23"
   - ${args}
 method: random
 metric:

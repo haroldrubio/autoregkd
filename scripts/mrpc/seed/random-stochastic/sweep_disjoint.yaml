@@ -31,6 +31,11 @@ command:
   - "--seed=42"
   - "--interpolation_type=random-stochastic"
   - "--layer_selection=disjoint"
+  - "--learning_rate=3.036572377086484e-05"
+  - "--max_prob=0.7996064402467724"
+  - "--num_interpolation_epochs=2"
+  - "--per_level_annealing_duration=0.39446301527888683"
+  - "--step_size=18"
   - ${args}
 method: random
 metric:
