@@ -839,7 +839,7 @@ def main():
     early_stopping = EarlyStoppingCallback(early_stopping_patience=4)
     if model_args.model_type == "huggingface" or model_args.model_type == "distilbart":
         # Add directly to the trainer
-        trainer.add_callback(early_stopping)
+        # trainer.add_callback(early_stopping)
     else:
         # For interpolation models, we only add early stopping after the interpolation period is done
         callback = AddAtEpochCallback(trainer=trainer,
